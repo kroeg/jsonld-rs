@@ -109,7 +109,10 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
     } else {
         if let Value::Array(ar) = res {
             for item in ar {
-                println!("{}", serde_json::to_string_pretty(&parse(item).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&parse(item).unwrap()).unwrap()
+                );
             }
         }
         println!("Ok!\n------");

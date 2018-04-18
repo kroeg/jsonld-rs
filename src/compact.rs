@@ -19,7 +19,7 @@ pub enum CompactionError {
     /// The value of a `@list` property isn't an array
     ListObjectNotArray,
 
-    /// The item inside a `@list` array isn't an object    
+    /// The item inside a `@list` array isn't an object
     ListItemNotObject,
 
     /// The value of `@reverse` is not an object.

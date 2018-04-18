@@ -62,8 +62,8 @@ impl fmt::Display for ExpansionError {
         match *self {
             ExpansionError::ContextExpansionError(ref err) => {
                 write!(f, "context expansion error: {}", err)
-            },
-            _ => f.write_str(self.description())
+            }
+            _ => f.write_str(self.description()),
         }
     }
 }
@@ -86,14 +86,14 @@ impl Error for ExpansionError {
             ExpansionError::InvalidTypeValue => "invalid @type value",
             ExpansionError::InvalidValueObjectValue => "invalid value object value",
             ExpansionError::InvalidReverseValue => "invalid @reverse value",
-            ExpansionError::ContextExpansionError(_) => "Failed to expand context"
+            ExpansionError::ContextExpansionError(_) => "Failed to expand context",
         }
     }
 
     fn cause(&self) -> Option<&Error> {
         match *self {
             ExpansionError::ContextExpansionError(ref err) => Some(err),
-            _ => None
+            _ => None,
         }
     }
 }

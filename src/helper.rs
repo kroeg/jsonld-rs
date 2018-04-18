@@ -1,10 +1,10 @@
 use serde::{Serialize, Serializer};
-use serde::ser::{SerializeStruct, SerializeSeq, SerializeMap};
+use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 
-use serde_json::{Number, Map, Value};
+use serde_json::{Map, Number, Value};
 use std::collections::BTreeMap;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ValueObjectValue {
     String(String),
     Number(Number),
@@ -14,24 +14,26 @@ pub enum ValueObjectValue {
 
 impl Serialize for ValueObjectValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-            match *self {
-                ValueObjectValue::String(ref strval) => serializer.serialize_str(strval),
-                ValueObjectValue::Number(ref num) => serializer.serialize_some(num),
-                ValueObjectValue::Boolean(ref boolean) => serializer.serialize_bool(boolean.clone()),
-                ValueObjectValue::Null => serializer.serialize_none()
-            }
+    where
+        S: Serializer,
+    {
+        match *self {
+            ValueObjectValue::String(ref strval) => serializer.serialize_str(strval),
+            ValueObjectValue::Number(ref num) => serializer.serialize_some(num),
+            ValueObjectValue::Boolean(ref boolean) => serializer.serialize_bool(boolean.clone()),
+            ValueObjectValue::Null => serializer.serialize_none(),
+        }
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ValueObjectType {
     TypeIri(String),
     Language(String),
     Null,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ValueObject {
     pub value: ValueObjectValue,
     pub value_type: ValueObjectType,
@@ -40,66 +42,78 @@ pub struct ValueObject {
 
 impl Serialize for ValueObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-            let count = 1 + if self.index.is_none() { 0 } else { 1 } + if self.value_type == ValueObjectType::Null { 0} else { 1 };
-            let mut state = serializer.serialize_struct("ValueObject", count)?;
-            state.serialize_field("@value", &self.value)?;
-
-            match self.value_type {
-                ValueObjectType::TypeIri(ref strval) => state.serialize_field("@type", strval)?,
-                ValueObjectType::Language(ref strval) => state.serialize_field("@language", strval)?,
-                ValueObjectType::Null => {}
+    where
+        S: Serializer,
+    {
+        let count = 1 + if self.index.is_none() { 0 } else { 1 }
+            + if self.value_type == ValueObjectType::Null {
+                0
+            } else {
+                1
             };
+        let mut state = serializer.serialize_struct("ValueObject", count)?;
+        state.serialize_field("@value", &self.value)?;
 
-            if let Some(ref indexval) = self.index {
-                state.serialize_field("@index", indexval)?;
-            }
+        match self.value_type {
+            ValueObjectType::TypeIri(ref strval) => state.serialize_field("@type", strval)?,
+            ValueObjectType::Language(ref strval) => state.serialize_field("@language", strval)?,
+            ValueObjectType::Null => {}
+        };
 
-            state.end()
+        if let Some(ref indexval) = self.index {
+            state.serialize_field("@index", indexval)?;
         }
+
+        state.end()
+    }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct NodeObject {
     pub id: Option<String>,
     pub types: Vec<String>,
     pub index: Option<String>,
 
     pub items: BTreeMap<String, LdList>,
-    pub reverse: BTreeMap<String, LdList>
+    pub reverse: BTreeMap<String, LdList>,
 }
 
 impl Serialize for NodeObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-            let count = if self.reverse.len() > 0 { 1 } else { 0 } + if self.types.len() > 0 { 1 } else { 0 } + self.items.len() + if self.id.is_none() { 0 } else { 1 } + if self.index.is_none() { 0 } else { 1 };
-            let mut state = serializer.serialize_map(Some(count))?;
+    where
+        S: Serializer,
+    {
+        let count =
+            if self.reverse.len() > 0 { 1 } else { 0 } + if self.types.len() > 0 { 1 } else { 0 }
+                + self.items.len() + if self.id.is_none() { 0 } else { 1 }
+                + if self.index.is_none() { 0 } else { 1 };
+        let mut state = serializer.serialize_map(Some(count))?;
 
-            if self.types.len() > 0 {
-                state.serialize_entry("@type", &self.types)?;
-            }
-
-            if let Some(ref indexval) = self.index {
-                state.serialize_entry("@index", indexval)?;
-            }
-
-            if self.reverse.len() > 0 {
-                state.serialize_entry("@reverse", &self.reverse)?;
-            }
-
-            if let Some(ref idval) = self.id {
-                state.serialize_entry("@id", idval)?;
-            }
-
-            for (ref key, ref val) in &self.items {
-                state.serialize_entry(key, val)?;
-            }
-
-            state.end()
+        if self.types.len() > 0 {
+            state.serialize_entry("@type", &self.types)?;
         }
+
+        if let Some(ref indexval) = self.index {
+            state.serialize_entry("@index", indexval)?;
+        }
+
+        if self.reverse.len() > 0 {
+            state.serialize_entry("@reverse", &self.reverse)?;
+        }
+
+        if let Some(ref idval) = self.id {
+            state.serialize_entry("@id", idval)?;
+        }
+
+        for (ref key, ref val) in &self.items {
+            state.serialize_entry(key, val)?;
+        }
+
+        state.end()
+    }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ValueOrNode {
     Value(ValueObject),
     Node(NodeObject),
@@ -107,15 +121,17 @@ pub enum ValueOrNode {
 
 impl Serialize for ValueOrNode {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-            match *self {
-                ValueOrNode::Value(ref vo) => vo.serialize(serializer),
-                ValueOrNode::Node(ref vo) => vo.serialize(serializer)
-            }
+    where
+        S: Serializer,
+    {
+        match *self {
+            ValueOrNode::Value(ref vo) => vo.serialize(serializer),
+            ValueOrNode::Node(ref vo) => vo.serialize(serializer),
         }
+    }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum LdList {
     List(Vec<ValueOrNode>),
     Set(Vec<ValueOrNode>),
@@ -123,25 +139,27 @@ pub enum LdList {
 
 impl Serialize for LdList {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
-            match *self {
-                LdList::List(ref lst) => {
-                    let mut state_arr = serializer.serialize_seq(Some(1))?;
-                    let mut map = BTreeMap::new();
-                    map.insert("@list".to_owned(), lst);
-                    state_arr.serialize_element(&map)?;
-                    state_arr.end()
+    where
+        S: Serializer,
+    {
+        match *self {
+            LdList::List(ref lst) => {
+                let mut state_arr = serializer.serialize_seq(Some(1))?;
+                let mut map = BTreeMap::new();
+                map.insert("@list".to_owned(), lst);
+                state_arr.serialize_element(&map)?;
+                state_arr.end()
+            }
+            LdList::Set(ref set) => {
+                let mut state_arr = serializer.serialize_seq(Some(set.len()))?;
+                for ref item in set {
+                    state_arr.serialize_element(item)?;
                 }
-                LdList::Set(ref set) => {
-                    let mut state_arr = serializer.serialize_seq(Some(set.len()))?;
-                    for ref item in set {
-                        state_arr.serialize_element(item)?;
-                    }
 
-                    state_arr.end()
-                }
+                state_arr.end()
             }
         }
+    }
 }
 
 fn parse_value_object(mut ob: Map<String, Value>) -> ValueObject {
@@ -204,14 +222,14 @@ fn list_into_stuff(mut ob: Map<String, Value>) -> BTreeMap<String, LdList> {
             if let Value::Array(mut arr) = value {
                 let first = arr.remove(0);
                 if let Value::Object(mut ob) = first {
-                if let Value::Array(mut cont) = ob.remove("@list").unwrap() {
-                    map.insert(
-                        key,
-                        LdList::List(cont.into_iter().map(|f| parse(f).unwrap()).collect()),
-                    );
-                } else {
-                    unreachable!();
-                }
+                    if let Value::Array(mut cont) = ob.remove("@list").unwrap() {
+                        map.insert(
+                            key,
+                            LdList::List(cont.into_iter().map(|f| parse(f).unwrap()).collect()),
+                        );
+                    } else {
+                        unreachable!();
+                    }
                 } else {
                     unreachable!();
                 }
@@ -278,7 +296,7 @@ pub fn parse_node_object(mut ob: Map<String, Value>) -> NodeObject {
         index: index,
         types: types,
         items: map,
-        reverse: reverse_map
+        reverse: reverse_map,
     }
 }
 
@@ -293,4 +311,3 @@ pub fn parse(expanded: Value) -> Result<ValueOrNode, ()> {
         Err(())
     }
 }
-
