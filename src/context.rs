@@ -1,10 +1,10 @@
-use url::Url;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use url::Url;
 
 use super::RemoteContextLoader;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct Term {
     pub type_mapping: Option<String>,
     pub iri_mapping: String,
@@ -13,7 +13,7 @@ pub(crate) struct Term {
     pub language_mapping: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Context {
     pub(crate) context_loader: Rc<RemoteContextLoader>,
     pub base_iri: Option<Url>,

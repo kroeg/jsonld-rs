@@ -5,6 +5,12 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate url;
 
+use jsonld::{expand, JsonLdOptions, RemoteContextLoader};
+use serde_json::Value;
+use std::error::Error;
+use std::fs::File;
+use std::rc::Rc;
+
 #[derive(Deserialize)]
 struct SequenceOpts {
     base: Option<String>,
@@ -39,15 +45,6 @@ struct FakeManifest {
     sequence: Vec<FakeSequence>,
 }
 
-use jsonld::{expand, JsonLdOptions, RemoteContextLoader};
-use jsonld::helper::parse;
-
-use std::fs::File;
-
-use serde_json::Value;
-use std::error::Error;
-use std::rc::Rc;
-
 #[derive(Debug)]
 struct TestContextLoader {}
 
@@ -79,12 +76,14 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
 
     println!("{} {}\n: {:?}", seq.id, seq.name, seq.purpose);
 
-    let base_iri = seq.option
+    let base_iri = seq
+        .option
         .as_ref()
         .and_then(|f| f.base.to_owned())
         .or_else(|| Some(iri.to_owned() + &seq.input));
 
-    let ctx = seq.option
+    let ctx = seq
+        .option
         .as_ref()
         .and_then(|f| f.expand_context.as_ref())
         .and_then(|f| Some(get_data(f)));
@@ -98,7 +97,9 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
             expand_context: ctx.as_ref(),
             processing_mode: None,
         },
-    ).unwrap();
+    );
+
+    let res = if let Ok(res) = res { res } else { return };
 
     if expect != res {
         println!(
@@ -107,14 +108,7 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
             serde_json::to_string_pretty(&res).unwrap()
         );
     } else {
-        if let Value::Array(ar) = res {
-            for item in ar {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&parse(item).unwrap()).unwrap()
-                );
-            }
-        }
+        println!("{}", serde_json::to_string_pretty(&res).unwrap());
         println!("Ok!\n------");
     }
 }

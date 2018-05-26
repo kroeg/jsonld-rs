@@ -1,9 +1,9 @@
 use super::context::Context;
-use serde_json::{Map, Value};
-use std::fmt;
-use std::error::Error;
-use std::collections::HashSet;
 use super::creation::ContextCreationError;
+use serde_json::{Map, Value};
+use std::collections::HashSet;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.
@@ -245,11 +245,9 @@ impl Context {
                             // 7.4.3
                             "@id" => {
                                 if let Value::String(idval) = value {
-                                    expanded_value = Value::String(active_context.expand_iri(
-                                        &idval,
-                                        true,
-                                        false,
-                                    ))
+                                    expanded_value = Value::String(
+                                        active_context.expand_iri(&idval, true, false),
+                                    )
                                 } else {
                                     return Err(ExpansionError::InvalidIdValue);
                                 }
@@ -507,7 +505,8 @@ impl Context {
                                             )?;
                                             if let Value::Array(var) = index_value {
                                                 for mut item in var {
-                                                    if !item.as_object()
+                                                    if !item
+                                                        .as_object()
                                                         .unwrap()
                                                         .contains_key("@index")
                                                     {
@@ -640,7 +639,9 @@ impl Context {
                     let val = &result["@value"];
 
                     for key in result.keys() {
-                        if key == "@value" || key == "@language" || key == "@type"
+                        if key == "@value"
+                            || key == "@language"
+                            || key == "@type"
                             || key == "@index"
                         {
                             continue;
@@ -691,7 +692,8 @@ impl Context {
                 if result.len() == 1 && result.contains_key("@language") {
                     Ok(Value::Null)
                 } else if active_property == None || active_property == Some("@graph") {
-                    if result.len() == 0 || result.contains_key("@value")
+                    if result.len() == 0
+                        || result.contains_key("@value")
                         || result.contains_key("@list")
                     {
                         Ok(Value::Null)
@@ -726,7 +728,8 @@ impl Context {
     pub fn expand(&mut self, elem: Value) -> Result<Value, ExpansionError> {
         let mut val = Context::_expand(self, None, elem)?;
 
-        if val.as_object()
+        if val
+            .as_object()
             .and_then(|f| Some(f.len() == 1 && f.contains_key("@graph"))) == Some(true)
         {
             if let Value::Object(mut objd) = val {

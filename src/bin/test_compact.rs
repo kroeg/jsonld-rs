@@ -45,8 +45,6 @@ use serde_json::Value;
 use std::error::Error;
 use std::rc::Rc;
 
-use jsonld::helper::parse;
-
 #[derive(Debug)]
 struct TestContextLoader {}
 

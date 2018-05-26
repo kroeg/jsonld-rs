@@ -6,8 +6,8 @@ use std::collections::HashSet;
 
 use super::RemoteContextLoader;
 
-use context::Context;
 use compact::CompactionError;
+use context::Context;
 use expand::ExpansionError;
 
 /// Options that may be passed to either `compact` or `expand`.
@@ -55,7 +55,8 @@ pub fn compact(
         }.map_err(|e| CompactionError::ContextError(e))?;
     }
 
-    let expanded = ctx.expand(input.clone())
+    let expanded = ctx
+        .expand(input.clone())
         .map_err(|e| CompactionError::ExpansionError(e))?;
 
     let context = if context.is_object() && context.as_object().unwrap().contains_key("@context") {

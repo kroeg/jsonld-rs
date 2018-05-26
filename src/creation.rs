@@ -1,14 +1,14 @@
-use url::Url;
-use serde_json::Value;
 use super::RemoteContextLoader;
-use std::rc::Rc;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::clone::Clone;
 use serde_json::Map as JsonMap;
+use serde_json::Value;
+use std::clone::Clone;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
+use url::Url;
 
 use std::borrow::Borrow;
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
 use super::context::{Context, Term};
 
@@ -105,7 +105,22 @@ impl Error for ContextCreationError {
 }
 
 lazy_static! {
-    static ref KEYWORDS: HashSet<&'static str> = vec!["@context", "@id", "@value", "@language", "@type", "@container", "@list", "@set", "@reverse", "@index", "@base", "@vocab", "@graph"].into_iter().collect();
+    static ref KEYWORDS: HashSet<&'static str> = vec![
+        "@context",
+        "@id",
+        "@value",
+        "@language",
+        "@type",
+        "@container",
+        "@list",
+        "@set",
+        "@reverse",
+        "@index",
+        "@base",
+        "@vocab",
+        "@graph",
+    ].into_iter()
+        .collect();
 }
 
 impl Context {
@@ -362,13 +377,8 @@ impl Context {
                                     None
                                 } else {
                                     // 13.2
-                                    let expanded = self.expand_iri_mut(
-                                        &string,
-                                        false,
-                                        true,
-                                        defined,
-                                        context,
-                                    )?;
+                                    let expanded = self
+                                        .expand_iri_mut(&string, false, true, defined, context)?;
                                     if expanded == "@context" {
                                         return Err(TermCreationError::InvalidKeywordAlias);
                                     } else if !expanded.starts_with("@")
@@ -430,7 +440,9 @@ impl Context {
                         match at_container {
                             Value::String(string) => {
                                 // 16.1
-                                if string == "@list" || string == "@set" || string == "@index"
+                                if string == "@list"
+                                    || string == "@set"
+                                    || string == "@index"
                                     || string == "@language"
                                 {
                                     Some(string)
@@ -513,7 +525,8 @@ impl Context {
                     }
 
                     // 3.2.3
-                    let dereferenced = self.context_loader
+                    let dereferenced = self
+                        .context_loader
                         .load_context(val.as_str())
                         .map_err(|e| ContextCreationError::RemoteContextError(e))?;
                     remote_contexts.insert(val);
@@ -539,7 +552,8 @@ impl Context {
                             Value::Null => result.base_iri = None,
                             Value::String(val) => {
                                 if let Some(iri) = result.base_iri {
-                                    result.base_iri = Some(iri.join(&val)
+                                    result.base_iri = Some(iri
+                                        .join(&val)
                                         .map_err(|_| ContextCreationError::InvalidBaseIRI)?);
                                 } else {
                                     result.base_iri = Some(Url::parse(&val)

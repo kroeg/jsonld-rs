@@ -1,14 +1,14 @@
 use super::RemoteContextLoader;
 use context::{Context, Term};
 
-use std::rc::Rc;
-use serde_json::{Map, Value};
-use std::fmt;
-use std::error::Error;
-use std::collections::{HashMap, HashSet};
-use std::cmp::Ordering;
 use creation::ContextCreationError;
 use expand::ExpansionError;
+use serde_json::{Map, Value};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::fmt;
+use std::rc::Rc;
 
 #[derive(Debug)]
 /// Errors that might occur when compacting a JSON-LD structure.
@@ -223,7 +223,8 @@ impl Context {
             res = Value::Object(map);
         }
 
-        if res.is_object() && !context.is_null()
+        if res.is_object()
+            && !context.is_null()
             && (!context.is_object() || context.as_object().unwrap().len() > 0)
         {
             res.as_object_mut()
@@ -355,7 +356,8 @@ impl Context {
                             for (property, mut value) in obj {
                                 if let Some(term) = active_context.terms.get(&property) {
                                     if term.reverse {
-                                        if (term.container_mapping
+                                        if (term
+                                            .container_mapping
                                             .as_ref()
                                             .and_then(|e| Some(e == "@set"))
                                             == Some(true)
@@ -421,7 +423,8 @@ impl Context {
                     }
 
                     // 7.4
-                    if expanded_property == "@index" || expanded_property == "@value"
+                    if expanded_property == "@index"
+                        || expanded_property == "@value"
                         || expanded_property == "@language"
                     {
                         let alias = active_context._compact_iri(
@@ -567,7 +570,8 @@ impl Context {
                             }
                         } else {
                             // 7.6.6.1
-                            if (!compact_arrays || container == Some("@set")
+                            if (!compact_arrays
+                                || container == Some("@set")
                                 || container == Some("@list")
                                 || expanded_property == "@list"
                                 || expanded_property == "@graph")
@@ -969,7 +973,8 @@ impl Context {
                 }
             }
 
-            if number_members == 1 && value.contains_key("@value")
+            if number_members == 1
+                && value.contains_key("@value")
                 && (!value["@value"].is_string() || self.language.is_none() || !null_lang_map)
             {
                 return Ok(value["@value"].clone());
