@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum QuadContents {
@@ -22,6 +24,38 @@ pub enum Reference {
     TypeValue(Option<String>, Value),
     LanguageValue(String, String),
     List(Vec<Reference>),
+}
+
+#[derive(Debug)]
+pub enum RDFError {
+    ExpectedString,
+    InvalidTypeValue,
+    InvalidIndexValue,
+    InvalidReverseValue,
+    ConflictingIndexValues,
+}
+
+
+impl fmt::Display for RDFError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.description())
+    }
+}
+
+impl Error for RDFError {
+    fn description(&self) -> &str {
+        match *self {
+            RDFError::ExpectedString => "Expected string",
+            RDFError::InvalidTypeValue => "invalid @type value",
+            RDFError::InvalidIndexValue => "invalid @index value",
+            RDFError::InvalidReverseValue => "invalid @reverse value",
+            RDFError::ConflictingIndexValues => "conflicting @index values",
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -50,22 +84,30 @@ pub enum SubjectType {
     Reverse(String, String),
 }
 
-fn nom_string(val: Value) -> String {
+fn nom_string(val: Value) -> Result<String, RDFError> {
     match val {
-        Value::String(strval) => strval,
-        _ => panic!("Not a string!"),
+        Value::String(strval) => Ok(strval),
+        _ => Err(RDFError::ExpectedString),
     }
 }
 
-fn make_reference(mut element: Map<String, Value>) -> Reference {
+pub fn transpose<T, E>(item: Option<Result<T, E>>) -> Result<Option<T>, E> {
+    match item {
+        Some(Ok(x)) => Ok(Some(x)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
+fn make_reference(mut element: Map<String, Value>) -> Result<Reference, RDFError> {
     let val = element.remove("@value").unwrap();
     let typeval = element.remove("@type");
     let language = element.remove("@language");
 
     if let Some(language) = language {
-        Reference::LanguageValue(nom_string(language), nom_string(val))
+        Ok(Reference::LanguageValue(nom_string(language)?, nom_string(val)?))
     } else {
-        Reference::TypeValue(typeval.and_then(|f| Some(nom_string(f))), val)
+        Ok(Reference::TypeValue(transpose(typeval.map(|f| nom_string(f)))?, val))
     }
 }
 
@@ -76,7 +118,7 @@ fn generate_node_map<T>(
     active_subject: &SubjectType,
     mut list: Option<&mut Vec<Reference>>,
     generator: &mut T,
-) where
+) -> Result<(), RDFError> where
     T: BlankNodeGenerator,
 {
     match element {
@@ -91,7 +133,7 @@ fn generate_node_map<T>(
                         active_subject,
                         Some(val),
                         generator,
-                    );
+                    )?;
                 }
             } else {
                 for item in arr {
@@ -102,7 +144,7 @@ fn generate_node_map<T>(
                         active_subject,
                         None,
                         generator,
-                    );
+                    )?;
                 }
             }
         }
@@ -114,13 +156,21 @@ fn generate_node_map<T>(
             }
 
             // 3
-            if element.contains_key("@type") {
+            let removed_type = element.remove("@type");
+            if let Some(Value::Array(mut elems)) = removed_type {
+                // If element has an @type member, perform for each item the following steps:
+                //    If item is a blank node identifier, replace it with a newly generated blank node identifier passing item for identifier.
+                let elems = elems.into_iter().map(|item| if let Value::String(item) = item { Value::String(if item.starts_with("_:") {
+                    generator.generate_blank_node(Some(&item))
+                } else { item }) } else { unreachable!() }).collect();
+                
+                element.insert("@type".to_owned(), Value::Array(elems));
                 // todo
             }
 
             // 4
             if element.contains_key("@value") {
-                let reference = make_reference(element);
+                let reference = make_reference(element)?;
 
                 if let Some(list) = list {
                     // 4.2
@@ -154,7 +204,7 @@ fn generate_node_map<T>(
                     active_subject,
                     Some(&mut result),
                     generator,
-                );
+                )?;
 
                 match active_subject {
                     SubjectType::Normal(ref active_subject, ref active_property)
@@ -235,11 +285,11 @@ fn generate_node_map<T>(
                             if let Value::String(strval) = item {
                                 node.types.push(strval) // XXX dedupe
                             } else {
-                                panic!("Invalid @type value")
+                                return Err(RDFError::InvalidTypeValue);
                             }
                         }
                     } else {
-                        panic!("Invalid @type value")
+                        return Err(RDFError::InvalidTypeValue);
                     }
                 }
 
@@ -249,12 +299,12 @@ fn generate_node_map<T>(
                         let index = Some(index);
 
                         if node.index != None && node.index != index {
-                            panic!("conflicting indexes")
+                            return Err(RDFError::ConflictingIndexValues);
                         }
 
                         node.index = index
                     } else {
-                        panic!("Invalid @index value")
+                        return Err(RDFError::InvalidIndexValue);
                     }
                 }
 
@@ -276,13 +326,13 @@ fn generate_node_map<T>(
                                         &refsubj,
                                         None,
                                         generator,
-                                    )
+                                    )?;
                                 }
                                 node = node_map.get_mut(active_graph).unwrap().remove(&id).unwrap();
                             }
                         }
                     } else {
-                        panic!("Invalid @reverse value")
+                        return Err(RDFError::InvalidReverseValue);
                     }
                 }
 
@@ -292,7 +342,7 @@ fn generate_node_map<T>(
                         .get_mut(active_graph)
                         .unwrap()
                         .insert(id.to_owned(), node);
-                    generate_node_map(graph, node_map, &id, &SubjectType::None, None, generator);
+                    generate_node_map(graph, node_map, &id, &SubjectType::None, None, generator)?;
                     node = node_map.get_mut(active_graph).unwrap().remove(&id).unwrap();
                 }
 
@@ -312,7 +362,7 @@ fn generate_node_map<T>(
                         .get_mut(active_graph)
                         .unwrap()
                         .insert(id.to_owned(), node);
-                    generate_node_map(value, node_map, active_graph, &reference, None, generator);
+                    generate_node_map(value, node_map, active_graph, &reference, None, generator)?;
                     node = node_map.get_mut(active_graph).unwrap().remove(&id).unwrap();
                 }
 
@@ -322,6 +372,8 @@ fn generate_node_map<T>(
 
         _ => {}
     }
+
+    Ok(())
 }
 
 fn object_to_rdf(typeval: Option<String>, value: Value) -> QuadContents {
@@ -428,7 +480,7 @@ where
     }
 }
 
-pub fn jsonld_to_rdf<T>(element: Value, generator: &mut T) -> HashMap<String, Vec<StringQuad>>
+pub fn jsonld_to_rdf<T>(element: Value, generator: &mut T) -> Result<HashMap<String, Vec<StringQuad>>, RDFError>
 where
     T: BlankNodeGenerator,
 {
@@ -441,7 +493,7 @@ where
         &SubjectType::None,
         None,
         generator,
-    );
+    )?;
 
     let mut dataset = HashMap::new();
 
@@ -482,7 +534,7 @@ where
         dataset.insert(graph_name, triples);
     }
 
-    dataset
+    Ok(dataset)
 }
 
 fn literal_to_json(contents: QuadContents, use_native_types: bool) -> Value {

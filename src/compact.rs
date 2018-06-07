@@ -14,7 +14,11 @@ use std::rc::Rc;
 /// Errors that might occur when compacting a JSON-LD structure.
 pub enum CompactionError {
     /// Expected a specific value to be a string, but it wasn't.
-    ValueNotString(&'static str),
+    IdNotString,
+    TypeNotString,
+    IdOrTypeNotString,
+    LanguageOrIndexNotString,
+    LanguageNotString,
 
     /// The value of a `@list` property isn't an array
     ListObjectNotArray,
@@ -44,12 +48,26 @@ impl fmt::Display for CompactionError {
 impl Error for CompactionError {
     fn description(&self) -> &str {
         match *self {
-            _ => "err",
+            CompactionError::IdNotString => "@id is not string",
+            CompactionError::TypeNotString => "@type value is not a string",
+            CompactionError::IdOrTypeNotString => "@id or @type value is not a string",
+            CompactionError::LanguageOrIndexNotString => "@language or @type value is not a string",
+            CompactionError::LanguageNotString => "@language value is not a string",
+            CompactionError::ListObjectNotArray => "value of @list is not an array",
+            CompactionError::ListItemNotObject => "item in @list is not an object",
+            CompactionError::TermNotObject => "value of @reverse is not an object",
+            CompactionError::ContextError(_) => "error parsing the context",
+            CompactionError::CompactionToListOfLists => "compaction to list of lists",
+            CompactionError::ExpansionError(_) => "error expanding the input",
         }
     }
 
     fn cause(&self) -> Option<&Error> {
-        None
+        match *self {
+            CompactionError::ContextError(ref err) => Some(err),
+            CompactionError::ExpansionError(ref err) => Some(err),
+            _ => None
+        }
     }
 }
 
@@ -306,7 +324,7 @@ impl Context {
                                 )?),
                             Value::Array(ref arval) => {
                                 if expanded_property != "@type" {
-                                    return Err(CompactionError::ValueNotString("@id"));
+                                    return Err(CompactionError::IdNotString);
                                 }
 
                                 let mut res = Vec::new();
@@ -321,7 +339,7 @@ impl Context {
                                                 false,
                                             )?))
                                         }
-                                        _ => return Err(CompactionError::ValueNotString("@type[]")),
+                                        _ => return Err(CompactionError::TypeNotString),
                                     }
                                 }
 
@@ -331,7 +349,7 @@ impl Context {
                                     Value::Array(res)
                                 }
                             }
-                            _ => return Err(CompactionError::ValueNotString("@id/@type")),
+                            _ => return Err(CompactionError::IdOrTypeNotString),
                         };
 
                         let alias = active_context._compact_iri(
@@ -555,7 +573,7 @@ impl Context {
 
                             let map_key = data[container.unwrap()]
                                 .as_str()
-                                .ok_or(CompactionError::ValueNotString("@language or @index"))?;
+                                .ok_or(CompactionError::LanguageOrIndexNotString)?;
                             if !map_object.contains_key(map_key) {
                                 map_object.insert(map_key.to_owned(), compacted_item);
                             } else {
@@ -671,14 +689,14 @@ impl Context {
                                         }
                                         Value::Null => item_language = Some("@null"),
                                         _ => {
-                                            return Err(CompactionError::ValueNotString("@language"))
+                                            return Err(CompactionError::LanguageNotString)
                                         }
                                     };
                                 } else if item.contains_key("@type") {
                                     // 2.6.4.2.2 -- warning! @type will be string
                                     item_type = Some(item["@type"]
                                         .as_str()
-                                        .ok_or(CompactionError::ValueNotString("@type"))?);
+                                        .ok_or(CompactionError::TypeNotString)?);
                                 } else {
                                     // 2.6.4.2.3
                                     item_language = Some("@null")
@@ -742,14 +760,14 @@ impl Context {
                             // 2.7.1.1
                             type_language_value = item["@language"]
                                 .as_str()
-                                .ok_or(CompactionError::ValueNotString("@language"))?;
+                                .ok_or(CompactionError::LanguageNotString)?;
                             containers.push("@language");
                         } else if item.contains_key("@type") {
                             // 2.7.1.2
                             type_language = TypeOrLanguage::Type;
                             type_language_value = item["@type"]
                                 .as_str()
-                                .ok_or(CompactionError::ValueNotString("@type"))?;
+                                .ok_or(CompactionError::TypeNotString)?;
                         }
                     } else {
                         // 2.7.2
@@ -788,7 +806,7 @@ impl Context {
                     // 2.12
                     let idval = item["@id"]
                         .as_str()
-                        .ok_or(CompactionError::ValueNotString("@id"))?;
+                        .ok_or(CompactionError::IdNotString)?;
                     let result = self._compact_iri(inverse_context, idval, None, true, true)?;
                     if self.terms.contains_key(&result) && self.terms[&result].iri_mapping == idval
                     {
@@ -902,7 +920,7 @@ impl Context {
                         if value.contains_key("@id") {
                             let idstr = match *value.get("@id").unwrap() {
                                 Value::String(ref a) => a.clone(),
-                                _ => return Err(CompactionError::ValueNotString("@id")),
+                                _ => return Err(CompactionError::IdNotString),
                             };
 
                             return Ok(if number_members == 1 && type_mapping == "@id" {
@@ -927,7 +945,7 @@ impl Context {
                         } else if value.contains_key("@type") {
                             let typstr = &match value["@type"] {
                                 Value::String(ref a) => a.clone(),
-                                _ => return Err(CompactionError::ValueNotString("@type")),
+                                _ => return Err(CompactionError::TypeNotString),
                             };
 
                             if type_mapping == typstr {
@@ -941,7 +959,7 @@ impl Context {
                             let langmap = &match value["@language"] {
                                 Value::String(ref a) => a.clone(),
                                 Value::Null => "@null".to_owned(),
-                                _ => return Err(CompactionError::ValueNotString("@language")),
+                                _ => return Err(CompactionError::LanguageNotString),
                             };
 
                             if language_mapping == langmap {
@@ -963,7 +981,7 @@ impl Context {
                 let langmap = &match value["@language"] {
                     Value::String(ref a) => a.clone(),
                     Value::Null => "@null".to_owned(),
-                    _ => return Err(CompactionError::ValueNotString("@language")),
+                    _ => return Err(CompactionError::LanguageNotString),
                 };
 
                 if let Some(ref lm) = self.language {
