@@ -8,7 +8,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
-use std::rc::Rc;
+
+use futures::prelude::*;
 
 #[derive(Debug)]
 /// Errors that might occur when compacting a JSON-LD structure.
@@ -66,7 +67,7 @@ impl Error for CompactionError {
         match *self {
             CompactionError::ContextError(ref err) => Some(err),
             CompactionError::ExpansionError(ref err) => Some(err),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -214,18 +215,17 @@ impl InverseContext {
 }
 
 impl Context {
-    pub fn compact(
-        context: &Value,
-        loader: Rc<RemoteContextLoader>,
-        element: &Value,
+    #[async]
+    pub fn compact<T: RemoteContextLoader>(
+        context: Value,
+        element: Value,
         compact_arrays: bool,
     ) -> Result<Value, CompactionError> {
-        let ctx = Context::new(loader)
-            .process_context(context, &mut HashSet::new())
+        let (_, ctx) = await!(Context::new().process_context::<T>(context.clone(), HashSet::new()))
             .map_err(|e| CompactionError::ContextError(e))?;
 
         let inverse = InverseContext::new(&ctx);
-        let mut res = Context::_compact(&ctx, &inverse, None, element, compact_arrays)?;
+        let mut res = Context::_compact(&ctx, &inverse, None, &element, compact_arrays)?;
         if res.is_array() {
             let mut map = Map::new();
             map.insert(
@@ -314,14 +314,15 @@ impl Context {
                 for (expanded_property, expanded_value) in obj {
                     if expanded_property == "@id" || expanded_property == "@type" {
                         let compacted_value = match *expanded_value {
-                            Value::String(ref strval) => Value::String(active_context
-                                ._compact_iri(
+                            Value::String(ref strval) => {
+                                Value::String(active_context._compact_iri(
                                     inverse_context,
                                     strval,
                                     None,
                                     expanded_property == "@type",
                                     false,
-                                )?),
+                                )?)
+                            }
                             Value::Array(ref arval) => {
                                 if expanded_property != "@type" {
                                     return Err(CompactionError::IdNotString);
@@ -688,15 +689,15 @@ impl Context {
                                             item_language = Some(string);
                                         }
                                         Value::Null => item_language = Some("@null"),
-                                        _ => {
-                                            return Err(CompactionError::LanguageNotString)
-                                        }
+                                        _ => return Err(CompactionError::LanguageNotString),
                                     };
                                 } else if item.contains_key("@type") {
                                     // 2.6.4.2.2 -- warning! @type will be string
-                                    item_type = Some(item["@type"]
-                                        .as_str()
-                                        .ok_or(CompactionError::TypeNotString)?);
+                                    item_type = Some(
+                                        item["@type"]
+                                            .as_str()
+                                            .ok_or(CompactionError::TypeNotString)?,
+                                    );
                                 } else {
                                     // 2.6.4.2.3
                                     item_language = Some("@null")
@@ -804,9 +805,7 @@ impl Context {
                     && item.contains_key("@id")
                 {
                     // 2.12
-                    let idval = item["@id"]
-                        .as_str()
-                        .ok_or(CompactionError::IdNotString)?;
+                    let idval = item["@id"].as_str().ok_or(CompactionError::IdNotString)?;
                     let result = self._compact_iri(inverse_context, idval, None, true, true)?;
                     if self.terms.contains_key(&result) && self.terms[&result].iri_mapping == idval
                     {

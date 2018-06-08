@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::rc::Rc;
 use url::Url;
 
 use std::collections::HashSet;
@@ -10,32 +9,32 @@ use compact::CompactionError;
 use context::Context;
 use expand::ExpansionError;
 
+use futures::prelude::*;
+
 /// Options that may be passed to either `compact` or `expand`.
-pub struct JsonLdOptions<'a> {
+pub struct JsonLdOptions {
     /// The base IRI of the document. Used to resolve relative references.
     pub base: Option<String>,
 
     /// When compacting, if single-element arrays should be unpacked.
     pub compact_arrays: Option<bool>,
 
-    /// The RemoteContextLoader to load remote contexts.
-    pub document_loader: Rc<RemoteContextLoader>,
-
     /// The context to use when expanding the JSON-LD structures.
-    pub expand_context: Option<&'a Value>,
+    pub expand_context: Option<Value>,
 
     /// The processing mode, currently unused.
     pub processing_mode: Option<String>,
 }
 
 /// Compacts a JSON-LD structure according to the API specification.
-pub fn compact(
-    input: &Value,
-    context: &Value,
+#[async]
+pub fn compact<T: RemoteContextLoader>(
+    input: Value,
+    context: Value,
     options: JsonLdOptions,
 ) -> Result<Value, CompactionError> {
     // 3
-    let mut ctx = Context::new(options.document_loader.clone());
+    let mut ctx = Context::new();
     ctx.base_iri = options
         .base
         .as_ref()
@@ -45,38 +44,46 @@ pub fn compact(
 
     // 4
     if let Some(val) = options.expand_context {
-        ctx = if val.is_object() && val.as_object().unwrap().contains_key("@context") {
-            ctx.process_context(
-                val.as_object().unwrap().get("@context").unwrap(),
-                &mut HashSet::new(),
-            )
+        let (_, c) = if let Value::Object(mut val) = val {
+            if let Some(val) = val.remove("@context") {
+                await!(ctx.process_context::<T>(val, HashSet::new(),))
+            } else {
+                await!(ctx.process_context::<T>(Value::Object(val), HashSet::new()))
+            }
         } else {
-            ctx.process_context(val, &mut HashSet::new())
+            await!(ctx.process_context::<T>(val, HashSet::new()))
         }.map_err(|e| CompactionError::ContextError(e))?;
+
+        ctx = c;
     }
 
-    let expanded = ctx
-        .expand(input.clone())
-        .map_err(|e| CompactionError::ExpansionError(e))?;
+    let expanded = await!(ctx.expand::<T>(input)).map_err(|e| CompactionError::ExpansionError(e))?;
 
-    let context = if context.is_object() && context.as_object().unwrap().contains_key("@context") {
-        context.as_object().unwrap().get("@context").unwrap()
+    let context = if let Value::Object(mut val) = context {
+        if let Some(val) = val.remove("@context") {
+            val
+        } else {
+            Value::Object(val)
+        }
     } else {
         context
     };
 
-    Context::compact(
+    await!(Context::compact::<T>(
         context,
-        options.document_loader,
-        &expanded,
+        expanded,
         options.compact_arrays.unwrap_or(true),
-    )
+    ))
 }
 
 /// Expands a JSON-LD structure according to the API specification.
-pub fn expand(input: &Value, options: JsonLdOptions) -> Result<Value, ExpansionError> {
+#[async]
+pub fn expand<T: RemoteContextLoader>(
+    input: Value,
+    options: JsonLdOptions,
+) -> Result<Value, ExpansionError> {
     // 3
-    let mut ctx = Context::new(options.document_loader.clone());
+    let mut ctx = Context::new();
     ctx.base_iri = options
         .base
         .as_ref()
@@ -86,15 +93,18 @@ pub fn expand(input: &Value, options: JsonLdOptions) -> Result<Value, ExpansionE
 
     // 4
     if let Some(val) = options.expand_context {
-        ctx = if val.is_object() && val.as_object().unwrap().contains_key("@context") {
-            ctx.process_context(
-                val.as_object().unwrap().get("@context").unwrap(),
-                &mut HashSet::new(),
-            )
+        let (_, c) = if let Value::Object(mut val) = val {
+            if let Some(val) = val.remove("@context") {
+                await!(ctx.process_context::<T>(val, HashSet::new(),))
+            } else {
+                await!(ctx.process_context::<T>(Value::Object(val), HashSet::new()))
+            }
         } else {
-            ctx.process_context(val, &mut HashSet::new())
+            await!(ctx.process_context::<T>(val, HashSet::new()))
         }.map_err(|e| ExpansionError::ContextExpansionError(e))?;
+
+        ctx = c;
     }
 
-    ctx.expand(input.clone())
+    await!(ctx.expand::<T>(input))
 }

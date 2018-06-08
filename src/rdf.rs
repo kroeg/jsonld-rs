@@ -35,7 +35,6 @@ pub enum RDFError {
     ConflictingIndexValues,
 }
 
-
 impl fmt::Display for RDFError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(self.description())
@@ -105,9 +104,15 @@ fn make_reference(mut element: Map<String, Value>) -> Result<Reference, RDFError
     let language = element.remove("@language");
 
     if let Some(language) = language {
-        Ok(Reference::LanguageValue(nom_string(language)?, nom_string(val)?))
+        Ok(Reference::LanguageValue(
+            nom_string(language)?,
+            nom_string(val)?,
+        ))
     } else {
-        Ok(Reference::TypeValue(transpose(typeval.map(|f| nom_string(f)))?, val))
+        Ok(Reference::TypeValue(
+            transpose(typeval.map(|f| nom_string(f)))?,
+            val,
+        ))
     }
 }
 
@@ -118,7 +123,8 @@ fn generate_node_map<T>(
     active_subject: &SubjectType,
     mut list: Option<&mut Vec<Reference>>,
     generator: &mut T,
-) -> Result<(), RDFError> where
+) -> Result<(), RDFError>
+where
     T: BlankNodeGenerator,
 {
     match element {
@@ -160,10 +166,21 @@ fn generate_node_map<T>(
             if let Some(Value::Array(mut elems)) = removed_type {
                 // If element has an @type member, perform for each item the following steps:
                 //    If item is a blank node identifier, replace it with a newly generated blank node identifier passing item for identifier.
-                let elems = elems.into_iter().map(|item| if let Value::String(item) = item { Value::String(if item.starts_with("_:") {
-                    generator.generate_blank_node(Some(&item))
-                } else { item }) } else { unreachable!() }).collect();
-                
+                let elems = elems
+                    .into_iter()
+                    .map(|item| {
+                        if let Value::String(item) = item {
+                            Value::String(if item.starts_with("_:") {
+                                generator.generate_blank_node(Some(&item))
+                            } else {
+                                item
+                            })
+                        } else {
+                            unreachable!()
+                        }
+                    })
+                    .collect();
+
                 element.insert("@type".to_owned(), Value::Array(elems));
                 // todo
             }
@@ -480,7 +497,10 @@ where
     }
 }
 
-pub fn jsonld_to_rdf<T>(element: Value, generator: &mut T) -> Result<HashMap<String, Vec<StringQuad>>, RDFError>
+pub fn jsonld_to_rdf<T>(
+    element: Value,
+    generator: &mut T,
+) -> Result<HashMap<String, Vec<StringQuad>>, RDFError>
 where
     T: BlankNodeGenerator,
 {

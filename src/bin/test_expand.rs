@@ -5,6 +5,11 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate url;
 
+extern crate futures_await as futures;
+
+use futures::future;
+use futures::prelude::*;
+
 use jsonld::{expand, JsonLdOptions, RemoteContextLoader};
 use serde_json::Value;
 use std::error::Error;
@@ -49,8 +54,10 @@ struct FakeManifest {
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    fn load_context(&self, _url: &str) -> Result<Value, Box<Error>> {
-        Ok(Value::Null)
+    type Future = future::FutureResult<Value, Box<Error>>;
+
+    fn load_context(_url: String) -> Self::Future {
+        future::ok(Value::Null)
     }
 }
 
@@ -88,16 +95,15 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
         .and_then(|f| f.expand_context.as_ref())
         .and_then(|f| Some(get_data(f)));
 
-    let res = expand(
-        &input,
+    let res = expand::<TestContextLoader>(
+        input,
         JsonLdOptions {
             base: base_iri,
             compact_arrays: None,
-            document_loader: Rc::new(TestContextLoader {}),
-            expand_context: ctx.as_ref(),
+            expand_context: ctx,
             processing_mode: None,
         },
-    );
+    ).wait();
 
     let res = if let Ok(res) = res { res } else { return };
 

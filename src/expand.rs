@@ -1,9 +1,12 @@
-use super::context::Context;
+use super::context::{Context, Term};
 use super::creation::ContextCreationError;
+use super::RemoteContextLoader;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+
+use futures::prelude::*;
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.
@@ -145,9 +148,10 @@ impl Context {
         Value::Object(resmap)
     }
 
-    fn _expand(
-        active_context: &Context,
-        active_property: Option<&str>,
+    #[async(boxed)]
+    fn _expand<T: RemoteContextLoader>(
+        active_context: Context,
+        active_property: Option<String>,
         elem: Value,
     ) -> Result<Value, ExpansionError> {
         match elem {
@@ -158,18 +162,22 @@ impl Context {
                 let mut res = Vec::new();
                 for item in arr {
                     // 3.2.1
-                    let expanded_item = Context::_expand(active_context, active_property, item)?;
+                    let expanded_item = await!(Context::_expand::<T>(
+                        active_context.clone(),
+                        active_property.clone(),
+                        item
+                    ))?;
 
                     // 3.2.2
                     if _array_or_list_object(&expanded_item) {
-                        if let Some(string) = active_property {
+                        if let Some(string) = active_property.clone() {
                             if string == "@list" {
                                 return Err(ExpansionError::ListOfLists);
                             }
 
                             if let Some(data) = active_context
                                 .terms
-                                .get(string)
+                                .get(&string)
                                 .and_then(|a| a.container_mapping.as_ref())
                             {
                                 if data == "@list" {
@@ -194,17 +202,16 @@ impl Context {
             }
 
             // 4
-            Value::Object(map) => {
+            Value::Object(mut map) => {
                 // 5
-                let mut _new_context = None;
-
                 let active_context = if map.contains_key("@context") {
                     // ugly hack to make the active_context survive
-                    let ctx = active_context
-                        .process_context(&map["@context"], &mut HashSet::new())
-                        .map_err(|e| ExpansionError::ContextExpansionError(e))?;
-                    _new_context = Some(ctx);
-                    _new_context.as_ref().unwrap()
+                    let (_, ctx) = await!(
+                        active_context
+                            .process_context::<T>(map.remove("@context").unwrap(), HashSet::new())
+                    ).map_err(|e| ExpansionError::ContextExpansionError(e))?;
+
+                    ctx
                 } else {
                     active_context
                 };
@@ -232,7 +239,7 @@ impl Context {
                         let expanded_value: Value;
 
                         // 7.4.1
-                        if active_property == Some("@reverse") {
+                        if active_property.as_ref().map(String::as_str) == Some("@reverse") {
                             return Err(ExpansionError::InvalidReversePropertyMap);
                         }
 
@@ -280,8 +287,11 @@ impl Context {
 
                             // 7.4.5
                             "@graph" => {
-                                expanded_value =
-                                    Context::_expand(active_context, Some(&prop), value)?
+                                expanded_value = await!(Context::_expand::<T>(
+                                    active_context.clone(),
+                                    Some(prop.to_owned()),
+                                    value
+                                ))?
                             }
 
                             // 7.4.6
@@ -316,12 +326,19 @@ impl Context {
                             // 7.4.9
                             "@list" => {
                                 // 7.4.9.1
-                                if active_property == None || active_property == Some("@graph") {
+                                if active_property == None
+                                    || active_property.as_ref().map(String::as_str)
+                                        == Some("@graph")
+                                {
                                     continue;
                                 }
 
                                 // 7.4.9.2
-                                let tex = Context::_expand(active_context, active_property, value)?;
+                                let tex = await!(Context::_expand::<T>(
+                                    active_context.clone(),
+                                    active_property.to_owned(),
+                                    value
+                                ))?;
 
                                 // 7.4.9.3
                                 if let Value::Object(ref obj) = tex {
@@ -340,19 +357,22 @@ impl Context {
 
                             // 7.4.10
                             "@set" => {
-                                expanded_value =
-                                    Context::_expand(active_context, active_property, value)?;
+                                expanded_value = await!(Context::_expand::<T>(
+                                    active_context.clone(),
+                                    active_property.to_owned(),
+                                    value
+                                ))?;
                             }
 
                             // 7.4.11
                             "@reverse" => {
                                 if let Value::Object(obj) = value {
                                     // 7.4.11.1
-                                    expanded_value = Context::_expand(
-                                        active_context,
-                                        Some(&prop),
+                                    expanded_value = await!(Context::_expand::<T>(
+                                        active_context.clone(),
+                                        Some(prop),
                                         Value::Object(obj.clone()),
-                                    )?;
+                                    ))?;
 
                                     if let Value::Object(mut expv) = expanded_value {
                                         // 7.4.11.2
@@ -446,9 +466,9 @@ impl Context {
                         result.insert(prop, expanded_value);
                     } else {
                         let mut expanded_value: Option<Value> = None;
-
-                        if let Some(item) = active_context.terms.get(&key) {
-                            if let Some(ref map) = item.container_mapping {
+                        let item = active_context.terms.get(&key).map(Term::to_owned);
+                        if let Some(item) = item {
+                            if let Some(map) = item.container_mapping.clone() {
                                 if map == "@language" && value.is_object() {
                                     // 7.5
                                     let obj = value.as_object().unwrap();
@@ -498,11 +518,11 @@ impl Context {
                                                     Value::Array(vec![index_value].into());
                                             }
 
-                                            index_value = Context::_expand(
-                                                active_context,
-                                                Some(&key),
+                                            index_value = await!(Context::_expand::<T>(
+                                                active_context.clone(),
+                                                Some(key.to_owned()),
                                                 index_value,
-                                            )?;
+                                            ))?;
                                             if let Value::Array(var) = index_value {
                                                 for mut item in var {
                                                     if !item
@@ -534,8 +554,11 @@ impl Context {
 
                         // 7.7
                         if expanded_value == None {
-                            expanded_value =
-                                Some(Context::_expand(active_context, Some(&key), value)?);
+                            expanded_value = Some(await!(Context::_expand::<T>(
+                                active_context.to_owned(),
+                                Some(key.to_owned()),
+                                value
+                            ))?);
                         }
                         let mut expanded_value = expanded_value.unwrap();
 
@@ -691,7 +714,9 @@ impl Context {
 
                 if result.len() == 1 && result.contains_key("@language") {
                     Ok(Value::Null)
-                } else if active_property == None || active_property == Some("@graph") {
+                } else if active_property == None
+                    || active_property.as_ref().map(String::as_str) == Some("@graph")
+                {
                     if result.len() == 0
                         || result.contains_key("@value")
                         || result.contains_key("@list")
@@ -715,7 +740,7 @@ impl Context {
                         Ok(Value::Null)
                     } else {
                         // 2.2
-                        Ok(active_context._expand_value(activeprop, elem))
+                        Ok(active_context._expand_value(&activeprop, elem))
                     }
                 } else {
                     // 2.1
@@ -725,8 +750,9 @@ impl Context {
         }
     }
 
-    pub fn expand(&mut self, elem: Value) -> Result<Value, ExpansionError> {
-        let mut val = Context::_expand(self, None, elem)?;
+    #[async]
+    pub fn expand<T: RemoteContextLoader>(self, elem: Value) -> Result<Value, ExpansionError> {
+        let mut val = await!(Context::_expand::<T>(self, None, elem))?;
 
         if val
             .as_object()

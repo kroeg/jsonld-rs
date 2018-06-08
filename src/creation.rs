@@ -3,7 +3,6 @@ use serde_json::Map as JsonMap;
 use serde_json::Value;
 use std::clone::Clone;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::rc::Rc;
 use url::Url;
 
 use std::borrow::Borrow;
@@ -11,6 +10,8 @@ use std::error::Error;
 use std::fmt;
 
 use super::context::{Context, Term};
+
+use futures::prelude::*;
 
 pub enum DefineStatus {
     Defining,
@@ -124,9 +125,8 @@ lazy_static! {
 }
 
 impl Context {
-    pub fn new(loader: Rc<RemoteContextLoader>) -> Context {
+    pub fn new() -> Context {
         Context {
-            context_loader: loader,
             base_iri: None,
             vocabulary_mapping: None,
             language: None,
@@ -495,15 +495,13 @@ impl Context {
         Ok(())
     }
 
-    pub fn process_context(
-        &self,
-        local_context: &Value,
-        remote_contexts: &mut HashSet<String>,
-    ) -> Result<Context, ContextCreationError> {
-        let mut result: Context = self.clone();
-
+    #[async(boxed)]
+    pub fn process_context<T: RemoteContextLoader>(
+        mut self,
+        local_context: Value,
+        mut remote_contexts: HashSet<String>,
+    ) -> Result<(HashSet<String>, Context), ContextCreationError> {
         // 2
-        let local_context = local_context.clone();
         let local_context = match local_context {
             Value::Array(a) => a,
             _ => vec![local_context],
@@ -514,8 +512,8 @@ impl Context {
             match context {
                 // 3.1
                 Value::Null => {
-                    result = Context::new(self.context_loader.clone());
-                    result.base_iri = self.base_iri.clone();
+                    self = Context::new();
+                    self.base_iri = self.base_iri.clone();
                 }
 
                 // 3.2
@@ -525,21 +523,21 @@ impl Context {
                     }
 
                     // 3.2.3
-                    let dereferenced = self
-                        .context_loader
-                        .load_context(val.as_str())
+                    let dereferenced = await!(T::load_context(val.to_owned()))
                         .map_err(|e| ContextCreationError::RemoteContextError(e))?;
                     remote_contexts.insert(val);
 
-                    if let Value::Object(obj) = dereferenced {
+                    if let Value::Object(mut obj) = dereferenced {
                         if !obj.contains_key("@context") {
                             return Err(ContextCreationError::RemoteContextNoObject);
                         }
 
-                        let context = obj.get("@context").unwrap();
+                        let context = obj.remove("@context").unwrap();
 
                         // 3.2.4
-                        result = result.process_context(context, remote_contexts)?;
+                        let (rc, s) = await!(self.process_context::<T>(context, remote_contexts))?;
+                        remote_contexts = rc;
+                        self = s;
                     } else {
                         return Err(ContextCreationError::RemoteContextNoObject);
                     }
@@ -549,15 +547,18 @@ impl Context {
                     if base != None && remote_contexts.is_empty() {
                         let value = base.unwrap();
                         match value {
-                            Value::Null => result.base_iri = None,
+                            Value::Null => self.base_iri = None,
                             Value::String(val) => {
-                                if let Some(iri) = result.base_iri {
-                                    result.base_iri = Some(iri
-                                        .join(&val)
-                                        .map_err(|_| ContextCreationError::InvalidBaseIRI)?);
+                                if let Some(iri) = self.base_iri {
+                                    self.base_iri = Some(
+                                        iri.join(&val)
+                                            .map_err(|_| ContextCreationError::InvalidBaseIRI)?,
+                                    );
                                 } else {
-                                    result.base_iri = Some(Url::parse(&val)
-                                        .map_err(|_| ContextCreationError::InvalidBaseIRI)?);
+                                    self.base_iri = Some(
+                                        Url::parse(&val)
+                                            .map_err(|_| ContextCreationError::InvalidBaseIRI)?,
+                                    );
                                 }
                             }
                             _ => return Err(ContextCreationError::InvalidBaseIRI),
@@ -567,14 +568,10 @@ impl Context {
                     // 3.5
                     if let Some(vocab) = map.remove("@vocab") {
                         match vocab {
-                            Value::Null => result.vocabulary_mapping = None,
+                            Value::Null => self.vocabulary_mapping = None,
                             Value::String(data) => {
                                 // xxx proper absolute iri processor
-                                if !data.starts_with("_:") {
-                                    let _iri = Url::parse(&data)
-                                        .map_err(|_e| ContextCreationError::InvalidVocabMapping)?;
-                                }
-                                result.vocabulary_mapping = Some(data);
+                                self.vocabulary_mapping = Some(data);
                             }
                             _ => return Err(ContextCreationError::InvalidVocabMapping),
                         }
@@ -582,9 +579,9 @@ impl Context {
 
                     if let Some(language) = map.remove("@language") {
                         match language {
-                            Value::Null => result.language = None,
+                            Value::Null => self.language = None,
                             Value::String(data) => {
-                                result.language = Some(data.to_lowercase());
+                                self.language = Some(data.to_lowercase());
                             }
 
                             _ => return Err(ContextCreationError::InvalidLanguageMapping),
@@ -596,8 +593,7 @@ impl Context {
                     while !map.is_empty() {
                         let key = map.keys().next().unwrap().clone();
                         let val = map.remove(&key).unwrap();
-                        result
-                            .create_term(&mut map, &key, val, &mut defined)
+                        self.create_term(&mut map, &key, val, &mut defined)
                             .map_err(|e| ContextCreationError::InvalidTerm(e))?;
                     }
                 }
@@ -606,6 +602,6 @@ impl Context {
             }
         }
 
-        Ok(result)
+        Ok((remote_contexts, self))
     }
 }

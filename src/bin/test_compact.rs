@@ -2,6 +2,7 @@ extern crate jsonld;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate futures_await as futures;
 extern crate serde_json;
 extern crate url;
 
@@ -30,6 +31,9 @@ struct FakeSequence {
     option: Option<SequenceOptions>,
 }
 
+use futures::future;
+use futures::prelude::*;
+
 #[derive(Deserialize)]
 struct FakeManifest {
     #[serde(rename = "baseIri")]
@@ -49,8 +53,10 @@ use std::rc::Rc;
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    fn load_context(&self, _url: &str) -> Result<Value, Box<Error>> {
-        Ok(Value::Null)
+    type Future = future::FutureResult<Value, Box<Error>>;
+
+    fn load_context(_url: String) -> Self::Future {
+        future::ok(Value::Null)
     }
 }
 
@@ -77,26 +83,35 @@ fn run_single_seq(seq: FakeSequence, base_iri: &str) {
 
     println!("{} {}\n: {:?}", seq.id, seq.name, seq.purpose);
 
-    let res = compact(
-        &input,
-        &context,
+    println!("{:?}", context);
+
+    let res = compact::<TestContextLoader>(
+        input,
+        context,
         JsonLdOptions {
             base: Some(base_iri.to_owned()),
             compact_arrays: seq.option.and_then(|f| f.compact_arrays),
-            document_loader: Rc::new(TestContextLoader {}),
             expand_context: None,
             processing_mode: None,
         },
-    ).unwrap();
+    ).wait();
 
-    if expect != res {
-        println!(
-            "Diff: {}\n{}\n------",
-            serde_json::to_string_pretty(&expect).unwrap(),
-            serde_json::to_string_pretty(&res).unwrap()
-        );
-    } else {
-        println!("Ok!\n------");
+    match res {
+        Ok(res) => {
+            if expect != res {
+                println!(
+                    "Diff: {}\n{}\n------",
+                    serde_json::to_string_pretty(&expect).unwrap(),
+                    serde_json::to_string_pretty(&res).unwrap()
+                );
+            } else {
+                println!("Ok!\n------");
+            }
+        }
+
+        Err(e) => {
+            println!("Fail: {}", e);
+        }
     }
 }
 
