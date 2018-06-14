@@ -230,9 +230,7 @@ impl Context {
             let mut map = Map::new();
             map.insert(
                 ctx._compact_iri(
-                    &inverse,
-                    "@graph",
-                    None, /* XXX Some(res) */
+                    &inverse, "@graph", None, /* XXX Some(res) */
                     true, // XXX is this right???
                     false,
                 )?,
