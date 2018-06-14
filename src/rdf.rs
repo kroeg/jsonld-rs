@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum QuadContents {
     Id(String),
     // type, contents, language
     Object(String, String, Option<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StringQuad {
     pub subject_id: String,
     pub predicate_id: String,

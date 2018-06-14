@@ -47,13 +47,12 @@ use std::fs::File;
 
 use serde_json::Value;
 use std::error::Error;
-use std::rc::Rc;
 
 #[derive(Debug)]
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    type Future = future::FutureResult<Value, Box<Error>>;
+    type Future = future::FutureResult<Value, Box<Error + Send>>;
 
     fn load_context(_url: String) -> Self::Future {
         future::ok(Value::Null)

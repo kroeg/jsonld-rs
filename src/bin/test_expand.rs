@@ -14,7 +14,6 @@ use jsonld::{expand, JsonLdOptions, RemoteContextLoader};
 use serde_json::Value;
 use std::error::Error;
 use std::fs::File;
-use std::rc::Rc;
 
 #[derive(Deserialize)]
 struct SequenceOpts {
@@ -38,7 +37,6 @@ struct FakeSequence {
     name: String,
     purpose: Option<String>,
     input: String,
-    //    context: String,
     expect: String,
     option: Option<SequenceOpts>,
 }
@@ -54,7 +52,7 @@ struct FakeManifest {
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    type Future = future::FutureResult<Value, Box<Error>>;
+    type Future = future::FutureResult<Value, Box<Error + Send>>;
 
     fn load_context(_url: String) -> Self::Future {
         future::ok(Value::Null)
@@ -114,7 +112,6 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
             serde_json::to_string_pretty(&res).unwrap()
         );
     } else {
-        println!("{}", serde_json::to_string_pretty(&res).unwrap());
         println!("Ok!\n------");
     }
 }

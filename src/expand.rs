@@ -148,7 +148,7 @@ impl Context {
         Value::Object(resmap)
     }
 
-    #[async(boxed)]
+    #[async(boxed_send)]
     fn _expand<T: RemoteContextLoader>(
         active_context: Context,
         active_property: Option<String>,

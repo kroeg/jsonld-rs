@@ -29,7 +29,7 @@ use futures::prelude::*;
 
 /// This trait is implemented by consumers of the API, to provide remote contexts.
 pub trait RemoteContextLoader {
-    type Future: Future<Item = serde_json::Value, Error = Box<std::error::Error>>;
+    type Future: Future<Item = serde_json::Value, Error = Box<std::error::Error + Send>> + Send + 'static;
 
     /// Loads a remote JSON-LD context into memory.
     fn load_context(url: String) -> Self::Future;

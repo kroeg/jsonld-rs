@@ -60,7 +60,7 @@ impl Error for TermCreationError {
 #[derive(Debug)]
 pub enum ContextCreationError {
     InvalidTerm(TermCreationError),
-    RemoteContextError(Box<Error>),
+    RemoteContextError(Box<Error + Send>),
     RemoteContextNoObject,
 
     RecursiveContextInclusion,
@@ -99,7 +99,7 @@ impl Error for ContextCreationError {
     fn cause(&self) -> Option<&Error> {
         match *self {
             ContextCreationError::InvalidTerm(ref err) => Some(err),
-            ContextCreationError::RemoteContextError(ref err) => Some(err.borrow()),
+            ContextCreationError::RemoteContextError(ref err) => None,
             _ => None,
         }
     }
@@ -495,7 +495,7 @@ impl Context {
         Ok(())
     }
 
-    #[async(boxed)]
+    #[async(boxed_send)]
     pub fn process_context<T: RemoteContextLoader>(
         mut self,
         local_context: Value,
