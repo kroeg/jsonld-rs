@@ -1,16 +1,25 @@
+//! Stuff that has to do with JSON-LD to RDF handling.
+//!
+//! This library defines its own structs for RDF quads,
+//! which it will serialize the RDF into.
+
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
 #[derive(Debug, Clone)]
+/// The contents of a single quad, which is either an ID reference or an Object.
 pub enum QuadContents {
+    /// An ID
     Id(String),
-    // type, contents, language
+
+    /// An object, which consists of respectively a type, language, and optionally a language.
     Object(String, String, Option<String>),
 }
 
 #[derive(Debug, Clone)]
+/// A single quad, consisting of a subject, predicate, and contents.
 pub struct StringQuad {
     pub subject_id: String,
     pub predicate_id: String,
@@ -19,19 +28,21 @@ pub struct StringQuad {
 }
 
 #[derive(Debug)]
-pub enum Reference {
-    Id(String),
-    TypeValue(Option<String>, Value),
-    LanguageValue(String, String),
-    List(Vec<Reference>),
-}
-
-#[derive(Debug)]
+/// An error that occurs when generating node maps.
 pub enum RDFError {
+    /// Value that should have been a string is not a string.
     ExpectedString,
+
+    /// `@type` value is not a string, array of string, or invalid
     InvalidTypeValue,
+
+    /// `@index` value is not a string.
     InvalidIndexValue,
+
+    /// `@reverse` value is not an object.
     InvalidReverseValue,
+
+    /// Two objects with the same ID have different `@index` values.
     ConflictingIndexValues,
 }
 
@@ -58,6 +69,23 @@ impl Error for RDFError {
 }
 
 #[derive(Debug)]
+/// A reference contained in the node map.
+enum Reference {
+    /// A reference to an ID.
+    Id(String),
+
+    /// A type/value reference.
+    TypeValue(Option<String>, Value),
+
+    /// A reference to a language string.
+    LanguageValue(String, String),
+
+    /// A list of references.
+    List(Vec<Reference>),
+}
+
+#[derive(Debug)]
+/// A node map node.
 struct Node {
     pub id: String,
     pub index: Option<String>,
@@ -66,23 +94,36 @@ struct Node {
     pub data: HashMap<String, Vec<Reference>>,
 }
 
+/// Alias to the structure that the node map generation
+/// expects.
 type NodeMap = HashMap<String, HashMap<String, Node>>;
 
+/// Trait used to generate blank nodes in the node map generation.
 pub trait BlankNodeGenerator {
+    /// Generate a new blank node. If `id` is Some, this method
+    /// should return the same `String`, based on the `id`.
     fn generate_blank_node(&mut self, id: Option<&str>) -> String;
 }
 
-const RDF_FIRST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
-const RDF_REST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
-const RDF_NIL: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+/// Predicate for the first item in a list.
+pub const RDF_FIRST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
+
+/// Predicate for the rest of the items in a list.
+pub const RDF_REST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+
+/// Object for the end of a list.
+pub const RDF_NIL: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
 
 #[derive(Debug)]
-pub enum SubjectType {
+/// Parameter passed into the node map generation.
+enum SubjectType {
     None,
     Normal(String, String),
     Reverse(String, String),
 }
 
+/// "Consumes" a JSON-LD value, assumes that it's a String, and
+/// returns an error if this is not true.
 fn nom_string(val: Value) -> Result<String, RDFError> {
     match val {
         Value::String(strval) => Ok(strval),
@@ -90,7 +131,8 @@ fn nom_string(val: Value) -> Result<String, RDFError> {
     }
 }
 
-pub fn transpose<T, E>(item: Option<Result<T, E>>) -> Result<Option<T>, E> {
+/// Translates `Option<Result>` to `Result<Option>`.
+fn transpose<T, E>(item: Option<Result<T, E>>) -> Result<Option<T>, E> {
     match item {
         Some(Ok(x)) => Ok(Some(x)),
         Some(Err(e)) => Err(e),
@@ -98,6 +140,7 @@ pub fn transpose<T, E>(item: Option<Result<T, E>>) -> Result<Option<T>, E> {
     }
 }
 
+/// Makes a reference out of a JSON object.
 fn make_reference(mut element: Map<String, Value>) -> Result<Reference, RDFError> {
     let val = element.remove("@value").unwrap();
     let typeval = element.remove("@type");
@@ -497,6 +540,11 @@ where
     }
 }
 
+/// Translates an expanded JSON-LD object into RDF quads.
+///
+/// This method needs a blank node generator, and returns a
+/// map keyed on graph. By default, all items go into
+/// `@default`, but if `@graph` is used this may differ.
 pub fn jsonld_to_rdf<T>(
     element: Value,
     generator: &mut T,
@@ -611,6 +659,13 @@ fn literal_to_json(contents: QuadContents, use_native_types: bool) -> Value {
     Value::Object(obj)
 }
 
+/// Translates RDF into equivalent JSON-LD.
+///
+/// Like its counterpart, this method takes a map keyed on
+/// graph. If none are used, the key should be `@default`.
+///
+/// This method cannot fail. All RDF is properly translatable into
+/// JSON-LD.
 pub fn rdf_to_jsonld(
     graphs: HashMap<String, Vec<StringQuad>>,
     use_native_types: bool,

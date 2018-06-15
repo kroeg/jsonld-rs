@@ -19,6 +19,7 @@ pub mod rdf;
 mod api;
 pub use api::*;
 
+/// All the errors that may be returned by specific parts of the API.
 pub mod error {
     pub use compact::CompactionError;
     pub use creation::{ContextCreationError, TermCreationError};

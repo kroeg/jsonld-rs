@@ -1,15 +1,15 @@
+use super::context::{Context, Term};
 use super::RemoteContextLoader;
+
 use serde_json::Map as JsonMap;
 use serde_json::Value;
+
 use std::clone::Clone;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use url::Url;
-
-use std::borrow::Borrow;
 use std::error::Error;
 use std::fmt;
 
-use super::context::{Context, Term};
+use url::Url;
 
 use futures::prelude::*;
 
@@ -99,7 +99,7 @@ impl Error for ContextCreationError {
     fn cause(&self) -> Option<&Error> {
         match *self {
             ContextCreationError::InvalidTerm(ref err) => Some(err),
-            ContextCreationError::RemoteContextError(ref err) => None,
+            ContextCreationError::RemoteContextError(_) => None,
             _ => None,
         }
     }
