@@ -58,9 +58,9 @@ impl Error for TermCreationError {
 }
 
 #[derive(Debug)]
-pub enum ContextCreationError {
+pub enum ContextCreationError<T: RemoteContextLoader> {
     InvalidTerm(TermCreationError),
-    RemoteContextError(Box<Error + Send>),
+    RemoteContextError(T::Error),
     RemoteContextNoObject,
 
     RecursiveContextInclusion,
@@ -70,7 +70,7 @@ pub enum ContextCreationError {
     InvalidLocalContext,
 }
 
-impl fmt::Display for ContextCreationError {
+impl<T: RemoteContextLoader> fmt::Display for ContextCreationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ContextCreationError::InvalidTerm(ref err) => write!(f, "invalid term: {}", err),
@@ -82,7 +82,7 @@ impl fmt::Display for ContextCreationError {
     }
 }
 
-impl Error for ContextCreationError {
+impl<T: RemoteContextLoader> Error for ContextCreationError<T> {
     fn description(&self) -> &str {
         match *self {
             ContextCreationError::InvalidTerm(_) => "invalid term",
@@ -500,7 +500,7 @@ impl Context {
         mut self,
         local_context: Value,
         mut remote_contexts: HashSet<String>,
-    ) -> Result<(HashSet<String>, Context), ContextCreationError> {
+    ) -> Result<(HashSet<String>, Context), ContextCreationError<T>> {
         // 2
         let local_context = match local_context {
             Value::Array(a) => a,

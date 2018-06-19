@@ -32,7 +32,7 @@ pub fn compact<T: RemoteContextLoader>(
     input: Value,
     context: Value,
     options: JsonLdOptions,
-) -> Result<Value, CompactionError> {
+) -> Result<Value, CompactionError<T>> {
     // 3
     let mut ctx = Context::new();
     ctx.base_iri = options
@@ -81,7 +81,7 @@ pub fn compact<T: RemoteContextLoader>(
 pub fn expand<T: RemoteContextLoader>(
     input: Value,
     options: JsonLdOptions,
-) -> Result<Value, ExpansionError> {
+) -> Result<Value, ExpansionError<T>> {
     // 3
     let mut ctx = Context::new();
     ctx.base_iri = options

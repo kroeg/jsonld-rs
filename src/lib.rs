@@ -19,6 +19,9 @@ pub mod rdf;
 mod api;
 pub use api::*;
 
+use std::error::Error;
+use std::fmt::Debug;
+
 /// All the errors that may be returned by specific parts of the API.
 pub mod error {
     pub use compact::CompactionError;
@@ -29,10 +32,9 @@ pub mod error {
 use futures::prelude::*;
 
 /// This trait is implemented by consumers of the API, to provide remote contexts.
-pub trait RemoteContextLoader {
-    type Future: Future<Item = serde_json::Value, Error = Box<std::error::Error + Send>>
-        + Send
-        + 'static;
+pub trait RemoteContextLoader: Debug {
+    type Error: Error + Send + Debug;
+    type Future: Future<Item = serde_json::Value, Error = Self::Error> + Send + 'static;
 
     /// Loads a remote JSON-LD context into memory.
     fn load_context(url: String) -> Self::Future;

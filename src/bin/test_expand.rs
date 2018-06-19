@@ -1,3 +1,5 @@
+#![feature(never_type)]
+
 extern crate jsonld;
 extern crate serde;
 #[macro_use]
@@ -12,7 +14,6 @@ use futures::prelude::*;
 
 use jsonld::{expand, JsonLdOptions, RemoteContextLoader};
 use serde_json::Value;
-use std::error::Error;
 use std::fs::File;
 
 #[derive(Deserialize)]
@@ -52,7 +53,8 @@ struct FakeManifest {
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    type Future = future::FutureResult<Value, Box<Error + Send>>;
+    type Error = !;
+    type Future = future::FutureResult<Value, Self::Error>;
 
     fn load_context(_url: String) -> Self::Future {
         future::ok(Value::Null)

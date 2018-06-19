@@ -10,7 +10,7 @@ use futures::prelude::*;
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.
-pub enum ExpansionError {
+pub enum ExpansionError<T: RemoteContextLoader> {
     /// Expanded into a list of lists
     ListOfLists,
 
@@ -57,10 +57,10 @@ pub enum ExpansionError {
     InvalidReverseValue,
 
     /// An error when parsing the context.
-    ContextExpansionError(ContextCreationError),
+    ContextExpansionError(ContextCreationError<T>),
 }
 
-impl fmt::Display for ExpansionError {
+impl<T: RemoteContextLoader> fmt::Display for ExpansionError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ExpansionError::ContextExpansionError(ref err) => {
@@ -71,7 +71,7 @@ impl fmt::Display for ExpansionError {
     }
 }
 
-impl Error for ExpansionError {
+impl<T: RemoteContextLoader> Error for ExpansionError<T> {
     fn description(&self) -> &str {
         match *self {
             ExpansionError::ListOfLists => "list of lists error",
@@ -153,7 +153,7 @@ impl Context {
         active_context: Context,
         active_property: Option<String>,
         elem: Value,
-    ) -> Result<Value, ExpansionError> {
+    ) -> Result<Value, ExpansionError<T>> {
         match elem {
             // 1
             Value::Null => Ok(Value::Null),
@@ -751,7 +751,7 @@ impl Context {
     }
 
     #[async]
-    pub fn expand<T: RemoteContextLoader>(self, elem: Value) -> Result<Value, ExpansionError> {
+    pub fn expand<T: RemoteContextLoader>(self, elem: Value) -> Result<Value, ExpansionError<T>> {
         let mut val = await!(Context::_expand::<T>(self, None, elem))?;
 
         if val

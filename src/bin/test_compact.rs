@@ -1,3 +1,5 @@
+#![feature(never_type)]
+
 extern crate jsonld;
 extern crate serde;
 #[macro_use]
@@ -5,6 +7,11 @@ extern crate serde_derive;
 extern crate futures_await as futures;
 extern crate serde_json;
 extern crate url;
+
+use jsonld::{compact, JsonLdOptions, RemoteContextLoader};
+
+use serde_json::Value;
+use std::fs::File;
 
 #[derive(Deserialize)]
 struct SequenceOptions {
@@ -41,18 +48,12 @@ struct FakeManifest {
     sequence: Vec<FakeSequence>,
 }
 
-use jsonld::{compact, JsonLdOptions, RemoteContextLoader};
-
-use std::fs::File;
-
-use serde_json::Value;
-use std::error::Error;
-
 #[derive(Debug)]
 struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
-    type Future = future::FutureResult<Value, Box<Error + Send>>;
+    type Error = !;
+    type Future = future::FutureResult<Value, Self::Error>;
 
     fn load_context(_url: String) -> Self::Future {
         future::ok(Value::Null)

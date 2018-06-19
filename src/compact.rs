@@ -13,7 +13,7 @@ use futures::prelude::*;
 
 #[derive(Debug)]
 /// Errors that might occur when compacting a JSON-LD structure.
-pub enum CompactionError {
+pub enum CompactionError<T: RemoteContextLoader> {
     /// Expected a specific value to be a string, but it wasn't.
     IdNotString,
     TypeNotString,
@@ -31,22 +31,22 @@ pub enum CompactionError {
     TermNotObject,
 
     /// An error occured parsing the context to use when compacting.
-    ContextError(ContextCreationError),
+    ContextError(ContextCreationError<T>),
 
     /// Compaction ended up compacting a list of lists, which is verboten.
     CompactionToListOfLists,
 
     /// Expanding the object to compact failed.
-    ExpansionError(ExpansionError),
+    ExpansionError(ExpansionError<T>),
 }
 
-impl fmt::Display for CompactionError {
+impl<T: RemoteContextLoader> fmt::Display for CompactionError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(self.description())
     }
 }
 
-impl Error for CompactionError {
+impl<T: RemoteContextLoader> Error for CompactionError<T> {
     fn description(&self) -> &str {
         match *self {
             CompactionError::IdNotString => "@id is not string",
@@ -220,7 +220,7 @@ impl Context {
         context: Value,
         element: Value,
         compact_arrays: bool,
-    ) -> Result<Value, CompactionError> {
+    ) -> Result<Value, CompactionError<T>> {
         let (_, ctx) = await!(Context::new().process_context::<T>(context.clone(), HashSet::new()))
             .map_err(|e| CompactionError::ContextError(e))?;
 
@@ -251,13 +251,13 @@ impl Context {
         Ok(res)
     }
 
-    fn _compact(
+    fn _compact<T: RemoteContextLoader>(
         active_context: &Context,
         inverse_context: &InverseContext,
         active_property: Option<&str>,
         element: &Value,
         compact_arrays: bool,
-    ) -> Result<Value, CompactionError> {
+    ) -> Result<Value, CompactionError<T>> {
         match *element {
             Value::Array(ref arr) => {
                 // 2
@@ -627,14 +627,14 @@ impl Context {
         }
     }
 
-    fn _compact_iri(
+    fn _compact_iri<T: RemoteContextLoader>(
         &self,
         inverse_context: &InverseContext,
         iri: &str,
         value: Option<&Map<String, Value>>,
         vocab: bool,
         reverse: bool,
-    ) -> Result<String, CompactionError> {
+    ) -> Result<String, CompactionError<T>> {
         if vocab && inverse_context.container_map.contains_key(iri) {
             let default_language = self.language.as_ref().map_or("@none", |f| &f);
             let mut containers = Vec::new();
@@ -884,12 +884,12 @@ impl Context {
         return Ok(iri.to_owned());
     }
 
-    fn _compact_value(
+    fn _compact_value<T: RemoteContextLoader>(
         &self,
         inverse_context: &InverseContext,
         active_property: Option<&str>,
         value: &Map<String, Value>,
-    ) -> Result<Value, CompactionError> {
+    ) -> Result<Value, CompactionError<T>> {
         // 1
         let mut number_members = value.len();
 
