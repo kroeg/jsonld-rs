@@ -15,7 +15,7 @@ pub enum QuadContents {
     /// An ID
     Id(String),
 
-    /// An object, which consists of respectively a type, language, and optionally a language.
+    /// An object, which consists of respectively a type, content, and optionally a language.
     Object(String, String, Option<String>),
 }
 
