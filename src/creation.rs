@@ -11,7 +11,7 @@ use std::fmt;
 
 use url::Url;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 pub enum DefineStatus {
     Defining,

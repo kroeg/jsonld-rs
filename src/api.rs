@@ -9,7 +9,7 @@ use compact::CompactionError;
 use context::Context;
 use expand::ExpansionError;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 /// Options that may be passed to either `compact` or `expand`.
 pub struct JsonLdOptions {

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.

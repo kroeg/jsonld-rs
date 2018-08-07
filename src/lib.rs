@@ -1,4 +1,4 @@
-#![feature(proc_macro, generators, const_vec_new)]
+#![feature(generators, const_vec_new, use_extern_macros)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -16,8 +16,6 @@ mod creation;
 mod expand;
 pub mod nodemap;
 pub mod rdf;
-
-use nodemap::{Entity, Pointer, Value, DefaultNodeGenerator};
 
 mod api;
 pub use api::*;

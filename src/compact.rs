@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::*;
+use futures::prelude::{*, await};
 
 #[derive(Debug)]
 /// Errors that might occur when compacting a JSON-LD structure.
