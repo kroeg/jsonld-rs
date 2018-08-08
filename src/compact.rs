@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 #[derive(Debug)]
 /// Errors that might occur when compacting a JSON-LD structure.
@@ -296,7 +296,8 @@ impl Context {
             Value::Object(ref obj) => {
                 // 4
                 if obj.contains_key("@value") || obj.contains_key("@id") {
-                    let res = active_context._compact_value(inverse_context, active_property, obj)?;
+                    let res =
+                        active_context._compact_value(inverse_context, active_property, obj)?;
                     if !res.is_array() && !res.is_object() {
                         return Ok(res);
                     }

@@ -11,7 +11,7 @@ use std::fmt;
 
 use url::Url;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 pub enum DefineStatus {
     Defining,
@@ -121,7 +121,7 @@ lazy_static! {
         "@vocab",
         "@graph",
     ].into_iter()
-        .collect();
+    .collect();
 }
 
 impl Context {
@@ -304,7 +304,8 @@ impl Context {
                     match at_type {
                         Value::String(string) => {
                             // 10.2
-                            let res = self.expand_iri_mut(&string, false, true, defined, context)?;
+                            let res =
+                                self.expand_iri_mut(&string, false, true, defined, context)?;
                             if !res.contains(":") && res != "@id" && res != "@vocab" {
                                 return Err(TermCreationError::InvalidTypeMapping);
                             }
@@ -327,7 +328,8 @@ impl Context {
                     let reverse_map = match at_reverse {
                         Value::String(string) => {
                             // 10.2
-                            let res = self.expand_iri_mut(&string, false, true, defined, context)?;
+                            let res =
+                                self.expand_iri_mut(&string, false, true, defined, context)?;
                             if !res.contains(":") {
                                 return Err(TermCreationError::InvalidIRIMapping);
                             }

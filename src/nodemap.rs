@@ -125,7 +125,7 @@ impl Entity {
             id: id,
             index: None,
             types: Vec::new(),
-            data: HashMap::new()
+            data: HashMap::new(),
         }
     }
 
@@ -155,7 +155,10 @@ impl Entity {
             map.insert("@index".to_owned(), JValue::String(index));
         }
 
-        map.insert("@type".to_owned(), JValue::Array(self.types.into_iter().map(JValue::String).collect()));
+        map.insert(
+            "@type".to_owned(),
+            JValue::Array(self.types.into_iter().map(JValue::String).collect()),
+        );
 
         for (k, v) in self.data {
             map.insert(
@@ -207,12 +210,15 @@ pub trait BlankNodeGenerator {
 
 pub struct DefaultNodeGenerator {
     i: u32,
-    data: HashMap<String, String>
+    data: HashMap<String, String>,
 }
 
 impl DefaultNodeGenerator {
     pub fn new() -> DefaultNodeGenerator {
-        DefaultNodeGenerator { i: 0, data: HashMap::new() }
+        DefaultNodeGenerator {
+            i: 0,
+            data: HashMap::new(),
+        }
     }
 }
 
@@ -337,29 +343,39 @@ where
             }
 
             // 3
-            let removed_type = element.remove("@type");
-            if let Some(JValue::Array(mut elems)) = removed_type {
-                // If element has an @type member, perform for each item the following steps:
-                //    If item is a blank node identifier, replace it with a newly generated blank node identifier passing item for identifier.
-                let elems = elems
-                    .into_iter()
-                    .map(|item| {
-                        if let JValue::String(item) = item {
-                            JValue::String(if item.starts_with("_:") {
-                                generator.generate_blank_node(Some(&item))
+            match element.remove("@type") {
+                Some(JValue::Array(mut elems)) => {
+                    // If element has an @type member, perform for each item the following steps:
+                    //    If item is a blank node identifier, replace it with a newly generated blank node identifier passing item for identifier.
+                    let elems = elems
+                        .into_iter()
+                        .map(|item| {
+                            if let JValue::String(item) = item {
+                                JValue::String(if item.starts_with("_:") {
+                                    generator.generate_blank_node(Some(&item))
+                                } else {
+                                    item
+                                })
                             } else {
-                                item
-                            })
+                                unreachable!()
+                            }
+                        }).collect();
+
+                    element.insert("@type".to_owned(), JValue::Array(elems));
+                    // todo
+                }
+                Some(JValue::String(item)) => {
+                    element.insert(
+                        "@type".to_owned(),
+                        JValue::String(if item.starts_with("_:") {
+                            generator.generate_blank_node(Some(&item))
                         } else {
-                            unreachable!()
-                        }
-                    })
-                    .collect();
-
-                element.insert("@type".to_owned(), JValue::Array(elems));
-                // todo
+                            item
+                        }),
+                    );
+                }
+                _ => {}
             }
-
             // 4
             if element.contains_key("@value") {
                 let reference = make_reference(element)?;
@@ -422,30 +438,39 @@ where
                 let id = element
                     .remove("@id")
                     .and_then(|f| match f {
-                        JValue::String(id) => if id.starts_with("_:") { Some(generator.generate_blank_node(Some(&id))) } else { Some(id) },
+                        JValue::String(id) => if id.starts_with("_:") {
+                            Some(generator.generate_blank_node(Some(&id)))
+                        } else {
+                            Some(id)
+                        },
                         _ => None,
-                    })
-                    .unwrap_or_else(|| generator.generate_blank_node(None));
+                    }).unwrap_or_else(|| generator.generate_blank_node(None));
 
                 if let SubjectType::Normal(ref active_id, ref active_property) = active_subject {
-                        // 6.6
-                        let reference = Pointer::Id(id.to_owned());
+                    // 6.6
+                    let reference = Pointer::Id(id.to_owned());
 
-                        if let Some(ref mut val) = list {
-                            val.push(reference)
+                    if let Some(ref mut val) = list {
+                        val.push(reference)
+                    } else {
+                        let mut node = node_map
+                            .get_mut(active_graph)
+                            .and_then(|f| f.remove(active_id))
+                            .unwrap();
+                        if node.data.contains_key(active_property) {
+                            // XXX dedupe
+                            node.data.get_mut(active_property).unwrap().push(reference);
                         } else {
-                            let mut node = node_map.get_mut(active_graph).and_then(|f| f.remove(active_id)).unwrap();
-                            if node.data.contains_key(active_property) {
-                                // XXX dedupe
-                                node.data.get_mut(active_property).unwrap().push(reference);
-                            } else {
-                                node.data
-                                    .insert(active_property.to_owned(), vec![reference]);
-                            }
-
-                            node_map.get_mut(active_graph).unwrap().insert(active_id.to_owned(), node);
+                            node.data
+                                .insert(active_property.to_owned(), vec![reference]);
                         }
+
+                        node_map
+                            .get_mut(active_graph)
+                            .unwrap()
+                            .insert(active_id.to_owned(), node);
                     }
+                }
 
                 // 6.3, 6.4
                 let mut node = node_map
@@ -455,7 +480,7 @@ where
                         id: id.to_owned(),
                         index: None,
                         types: Vec::new(),
-                        data: HashMap::new()
+                        data: HashMap::new(),
                     });
 
                 match active_subject {
@@ -469,7 +494,7 @@ where
                             node.data
                                 .insert(active_property.to_owned(), vec![reference]);
                         }
-                    },
+                    }
 
                     _ => {}
                 }
@@ -567,7 +592,6 @@ where
 
         _ => {}
     }
-
 
     Ok(())
 }

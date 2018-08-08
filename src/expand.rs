@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.
@@ -756,7 +756,8 @@ impl Context {
 
         if val
             .as_object()
-            .and_then(|f| Some(f.len() == 1 && f.contains_key("@graph"))) == Some(true)
+            .and_then(|f| Some(f.len() == 1 && f.contains_key("@graph")))
+            == Some(true)
         {
             if let Value::Object(mut objd) = val {
                 val = objd.remove("@graph").unwrap();

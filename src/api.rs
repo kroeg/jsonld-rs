@@ -9,7 +9,7 @@ use compact::CompactionError;
 use context::Context;
 use expand::ExpansionError;
 
-use futures::prelude::{*, await};
+use futures::prelude::{await, *};
 
 /// Options that may be passed to either `compact` or `expand`.
 pub struct JsonLdOptions {
@@ -57,7 +57,8 @@ pub fn compact<T: RemoteContextLoader>(
         ctx = c;
     }
 
-    let expanded = await!(ctx.expand::<T>(input)).map_err(|e| CompactionError::ExpansionError(e))?;
+    let expanded =
+        await!(ctx.expand::<T>(input)).map_err(|e| CompactionError::ExpansionError(e))?;
 
     let context = if let Value::Object(mut val) = context {
         if let Some(val) = val.remove("@context") {
