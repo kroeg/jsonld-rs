@@ -68,6 +68,8 @@ pub enum ContextCreationError<T: RemoteContextLoader> {
     InvalidVocabMapping,
     InvalidLanguageMapping,
     InvalidLocalContext,
+
+    TooManyContexts,
 }
 
 impl<T: RemoteContextLoader> fmt::Display for ContextCreationError<T> {
@@ -93,6 +95,7 @@ impl<T: RemoteContextLoader> Error for ContextCreationError<T> {
             ContextCreationError::InvalidVocabMapping => "invalid vocab mapping",
             ContextCreationError::InvalidLanguageMapping => "invalid language mapping",
             ContextCreationError::InvalidLocalContext => "invalid local context",
+            ContextCreationError::TooManyContexts => "too many contexts",
         }
     }
 
@@ -520,6 +523,10 @@ impl Context {
 
                 // 3.2
                 Value::String(val) => {
+                    if remote_contexts.len() > 4 {
+                        return Err(ContextCreationError::TooManyContexts);
+                    }
+
                     if remote_contexts.contains(&val) {
                         return Err(ContextCreationError::RecursiveContextInclusion);
                     }
