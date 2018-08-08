@@ -229,7 +229,7 @@ fn literal_to_json(contents: QuadContents, use_native_types: bool) -> JValue {
             } else if use_native_types && typeval == "http://www.w3.org/2001/XMLSchema#boolean" {
                 if value == "true" {
                     (None, JValue::Bool(true))
-                } else if value == "False" {
+                } else if value == "false" {
                     (None, JValue::Bool(false))
                 } else {
                     (Some(typeval), JValue::String(value))
