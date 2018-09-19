@@ -452,6 +452,10 @@ pub fn rdf_to_jsonld(
                         value.insert("@list".to_owned(), JValue::Array(list));
                         break;
                     }
+
+                    node_map.insert(node_id.to_owned(), JValue::Object(head_object));
+                } else {
+                    unreachable!();
                 }
             }
 
