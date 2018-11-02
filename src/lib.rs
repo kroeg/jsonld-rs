@@ -1,4 +1,4 @@
-#![feature(generators, const_vec_new, use_extern_macros)]
+#![feature(generators, const_vec_new)]
 
 #[macro_use]
 extern crate lazy_static;
