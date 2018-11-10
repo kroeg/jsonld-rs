@@ -5,7 +5,7 @@ use creation::ContextCreationError;
 use expand::ExpansionError;
 use serde_json::{Map, Value};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -221,7 +221,7 @@ impl Context {
         element: Value,
         compact_arrays: bool,
     ) -> Result<Value, CompactionError<T>> {
-        let (_, ctx) = await!(Context::new().process_context::<T>(context.clone(), HashSet::new()))
+        let (_, ctx) = await!(Context::new().process_context::<T>(context.clone(), HashMap::new()))
             .map_err(|e| CompactionError::ContextError(e))?;
 
         let inverse = InverseContext::new(&ctx);

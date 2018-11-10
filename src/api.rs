@@ -1,7 +1,7 @@
 use serde_json::Value;
 use url::Url;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use super::RemoteContextLoader;
 
@@ -46,13 +46,14 @@ pub fn compact<T: RemoteContextLoader>(
     if let Some(val) = options.expand_context {
         let (_, c) = if let Value::Object(mut val) = val {
             if let Some(val) = val.remove("@context") {
-                await!(ctx.process_context::<T>(val, HashSet::new(),))
+                await!(ctx.process_context::<T>(val, HashMap::new(),))
             } else {
-                await!(ctx.process_context::<T>(Value::Object(val), HashSet::new()))
+                await!(ctx.process_context::<T>(Value::Object(val), HashMap::new()))
             }
         } else {
-            await!(ctx.process_context::<T>(val, HashSet::new()))
-        }.map_err(|e| CompactionError::ContextError(e))?;
+            await!(ctx.process_context::<T>(val, HashMap::new()))
+        }
+        .map_err(|e| CompactionError::ContextError(e))?;
 
         ctx = c;
     }
@@ -96,13 +97,14 @@ pub fn expand<T: RemoteContextLoader>(
     if let Some(val) = options.expand_context {
         let (_, c) = if let Value::Object(mut val) = val {
             if let Some(val) = val.remove("@context") {
-                await!(ctx.process_context::<T>(val, HashSet::new(),))
+                await!(ctx.process_context::<T>(val, HashMap::new(),))
             } else {
-                await!(ctx.process_context::<T>(Value::Object(val), HashSet::new()))
+                await!(ctx.process_context::<T>(Value::Object(val), HashMap::new()))
             }
         } else {
-            await!(ctx.process_context::<T>(val, HashSet::new()))
-        }.map_err(|e| ExpansionError::ContextExpansionError(e))?;
+            await!(ctx.process_context::<T>(val, HashMap::new()))
+        }
+        .map_err(|e| ExpansionError::ContextExpansionError(e))?;
 
         ctx = c;
     }

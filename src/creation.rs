@@ -504,8 +504,8 @@ impl Context {
     pub fn process_context<T: RemoteContextLoader>(
         mut self,
         local_context: Value,
-        mut remote_contexts: HashSet<String>,
-    ) -> Result<(HashSet<String>, Context), ContextCreationError<T>> {
+        mut remote_contexts: HashMap<String, Option<Value>>,
+    ) -> Result<(HashMap<String, Option<Value>>, Context), ContextCreationError<T>> {
         // 2
         let local_context = match local_context {
             Value::Array(a) => a,
@@ -527,28 +527,41 @@ impl Context {
                         return Err(ContextCreationError::TooManyContexts);
                     }
 
-                    if remote_contexts.contains(&val) {
-                        return Err(ContextCreationError::RecursiveContextInclusion);
-                    }
+                    match remote_contexts.get(&val).cloned() {
+                        Some(None) => return Err(ContextCreationError::RecursiveContextInclusion),
+                        Some(Some(context)) => {
+                            let (rc, s) = await!(
+                                self.process_context::<T>(context.clone(), remote_contexts)
+                            )?;
+                            remote_contexts = rc;
+                            remote_contexts.insert(val, Some(context));
 
-                    // 3.2.3
-                    let dereferenced = await!(T::load_context(val.to_owned()))
-                        .map_err(|e| ContextCreationError::RemoteContextError(e))?;
-                    remote_contexts.insert(val);
-
-                    if let Value::Object(mut obj) = dereferenced {
-                        if !obj.contains_key("@context") {
-                            return Err(ContextCreationError::RemoteContextNoObject);
+                            self = s;
                         }
 
-                        let context = obj.remove("@context").unwrap();
+                        None => {
+                            // 3.2.3
+                            let dereferenced = await!(T::load_context(val.to_owned()))
+                                .map_err(|e| ContextCreationError::RemoteContextError(e))?;
+                            remote_contexts.insert(val.to_owned(), None);
 
-                        // 3.2.4
-                        let (rc, s) = await!(self.process_context::<T>(context, remote_contexts))?;
-                        remote_contexts = rc;
-                        self = s;
-                    } else {
-                        return Err(ContextCreationError::RemoteContextNoObject);
+                            if let Value::Object(mut obj) = dereferenced {
+                                let context = obj
+                                    .remove("@context")
+                                    .unwrap_or_else(|| Value::Object(JsonMap::new()));
+
+                                // 3.2.4
+                                let (rc, s) = await!(
+                                    self.process_context::<T>(context.clone(), remote_contexts)
+                                )?;
+                                remote_contexts = rc;
+                                remote_contexts.insert(val, Some(context));
+
+                                self = s;
+                            } else {
+                                return Err(ContextCreationError::RemoteContextNoObject);
+                            }
+                        }
                     }
                 }
                 Value::Object(mut map) => {

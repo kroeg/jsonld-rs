@@ -2,7 +2,7 @@ use super::context::{Context, Term};
 use super::creation::ContextCreationError;
 use super::RemoteContextLoader;
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -206,10 +206,9 @@ impl Context {
                 // 5
                 let active_context = if map.contains_key("@context") {
                     // ugly hack to make the active_context survive
-                    let (_, ctx) = await!(
-                        active_context
-                            .process_context::<T>(map.remove("@context").unwrap(), HashSet::new())
-                    ).map_err(|e| ExpansionError::ContextExpansionError(e))?;
+                    let (_, ctx) = await!(active_context
+                        .process_context::<T>(map.remove("@context").unwrap(), HashMap::new()))
+                    .map_err(|e| ExpansionError::ContextExpansionError(e))?;
 
                     ctx
                 } else {
