@@ -123,7 +123,8 @@ lazy_static! {
         "@base",
         "@vocab",
         "@graph",
-    ].into_iter()
+    ]
+    .into_iter()
     .collect();
 }
 

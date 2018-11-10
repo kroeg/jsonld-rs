@@ -94,7 +94,8 @@ fn run_single_seq(seq: FakeSequence, base_iri: &str) {
             expand_context: None,
             processing_mode: None,
         },
-    ).wait();
+    )
+    .wait();
 
     match res {
         Ok(res) => {

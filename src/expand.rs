@@ -189,9 +189,11 @@ impl Context {
 
                     // 3.2.3
                     match expanded_item {
-                        Value::Array(arr) => for item in arr {
-                            res.push(item)
-                        },
+                        Value::Array(arr) => {
+                            for item in arr {
+                                res.push(item)
+                            }
+                        }
                         Value::Null => {}
                         _ => res.push(expanded_item),
                     }
@@ -679,9 +681,11 @@ impl Context {
                     match *val {
                         Value::Null => return Ok(Value::Null),
                         Value::String(_) => {}
-                        _ => if result.contains_key("@language") {
-                            return Err(ExpansionError::InvalidTypedValue);
-                        },
+                        _ => {
+                            if result.contains_key("@language") {
+                                return Err(ExpansionError::InvalidTypedValue);
+                            }
+                        }
                     }
 
                     if let Some(typeval) = result.get("@type") {

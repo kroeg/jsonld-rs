@@ -103,7 +103,8 @@ fn run_single_seq(seq: FakeSequence, iri: &str) {
             expand_context: ctx,
             processing_mode: None,
         },
-    ).wait();
+    )
+    .wait();
 
     let res = if let Ok(res) = res { res } else { return };
 

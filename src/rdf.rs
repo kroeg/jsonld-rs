@@ -58,7 +58,8 @@ fn object_to_rdf(typeval: Option<String>, value: JValue) -> QuadContents {
                 "http://www.w3.org/2001/XMLSchema#double"
             } else {
                 "http://www.w3.org/2001/XMLSchema#integer"
-            }.to_owned();
+            }
+            .to_owned();
 
             QuadContents::Object(typeval, numval.to_string(), None)
         }

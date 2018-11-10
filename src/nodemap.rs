@@ -359,7 +359,8 @@ where
                             } else {
                                 unreachable!()
                             }
-                        }).collect();
+                        })
+                        .collect();
 
                     element.insert("@type".to_owned(), JValue::Array(elems));
                     // todo
@@ -438,13 +439,16 @@ where
                 let id = element
                     .remove("@id")
                     .and_then(|f| match f {
-                        JValue::String(id) => if id.starts_with("_:") {
-                            Some(generator.generate_blank_node(Some(&id)))
-                        } else {
-                            Some(id)
-                        },
+                        JValue::String(id) => {
+                            if id.starts_with("_:") {
+                                Some(generator.generate_blank_node(Some(&id)))
+                            } else {
+                                Some(id)
+                            }
+                        }
                         _ => None,
-                    }).unwrap_or_else(|| generator.generate_blank_node(None));
+                    })
+                    .unwrap_or_else(|| generator.generate_blank_node(None));
 
                 if let SubjectType::Normal(ref active_id, ref active_property) = active_subject {
                     // 6.6
