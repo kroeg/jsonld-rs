@@ -1,17 +1,12 @@
 #![feature(never_type)]
 
-extern crate jsonld;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate futures_await as futures;
-extern crate serde_json;
-extern crate url;
-
 use jsonld::{compact, JsonLdOptions, RemoteContextLoader};
 
+use serde::Deserialize;
 use serde_json::Value;
 use std::fs::File;
+use std::future::Future;
+use std::pin::Pin;
 
 #[derive(Deserialize)]
 struct SequenceOptions {
@@ -38,9 +33,6 @@ struct FakeSequence {
     option: Option<SequenceOptions>,
 }
 
-use futures::future;
-use futures::prelude::*;
-
 #[derive(Deserialize)]
 struct FakeManifest {
     #[serde(rename = "baseIri")]
@@ -53,10 +45,10 @@ struct TestContextLoader {}
 
 impl RemoteContextLoader for TestContextLoader {
     type Error = !;
-    type Future = future::FutureResult<Value, Self::Error>;
+    type Future = Pin<Box<dyn Future<Output = Result<Value, Self::Error>> + Send>>;
 
     fn load_context(_url: String) -> Self::Future {
-        future::ok(Value::Null)
+        Box::pin(async { Ok(Value::Null) })
     }
 }
 
@@ -66,7 +58,7 @@ fn get_data(name: &str) -> Value {
     serde_json::from_reader(f).expect("json fail")
 }
 
-fn run_single_seq(seq: FakeSequence, base_iri: &str) {
+async fn run_single_seq(seq: FakeSequence, base_iri: &str) {
     if !seq.types.iter().any(|f| f == "jld:PositiveEvaluationTest") {
         return;
     }
@@ -81,21 +73,20 @@ fn run_single_seq(seq: FakeSequence, base_iri: &str) {
     let context = get_data(&seq.context);
     let expect = get_data(&seq.expect);
 
-    println!("{} {}\n: {:?}", seq.id, seq.name, seq.purpose);
-
-    println!("{:?}", context);
-
     let res = compact::<TestContextLoader>(
-        input,
-        context,
-        JsonLdOptions {
+        &input,
+        &context,
+        &JsonLdOptions {
             base: Some(base_iri.to_owned()),
             compact_arrays: seq.option.and_then(|f| f.compact_arrays),
             expand_context: None,
             processing_mode: None,
         },
     )
-    .wait();
+    .await;
+
+    println!("{} {}\n: {:?}", seq.id, seq.name, seq.purpose);
+    println!("{:?}", context);
 
     match res {
         Ok(res) => {
@@ -119,6 +110,6 @@ fn run_single_seq(seq: FakeSequence, base_iri: &str) {
 fn main() {
     let data: FakeManifest = serde_json::from_value(get_data("compact-manifest.jsonld")).unwrap();
     for seq in data.sequence {
-        run_single_seq(seq, &data.base_iri);
+        async_std::task::block_on(run_single_seq(seq, &data.base_iri));
     }
 }

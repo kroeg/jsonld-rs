@@ -6,8 +6,9 @@
 use serde_json::Map;
 use serde_json::Value as JValue;
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 
-use super::nodemap::{generate_node_map, BlankNodeGenerator, NodeMapError, Pointer};
+use crate::nodemap::{generate_node_map, BlankNodeGenerator, NodeMapError, Pointer};
 
 #[derive(Debug, Clone)]
 /// The contents of a single quad, which is either an ID reference or an Object.
@@ -29,13 +30,16 @@ pub struct StringQuad {
 }
 
 /// Predicate for the first item in a list.
-pub const RDF_FIRST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
+pub const RDF_FIRST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
 
 /// Predicate for the rest of the items in a list.
-pub const RDF_REST: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
+pub const RDF_REST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
 
 /// Object for the end of a list.
-pub const RDF_NIL: &'static str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+pub const RDF_NIL: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
+
+/// ID for the type of a list.
+pub const RDF_LIST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#List";
 
 fn object_to_rdf(typeval: Option<String>, value: JValue) -> QuadContents {
     match value {
@@ -76,7 +80,7 @@ fn serialize_list<T>(
 where
     T: BlankNodeGenerator,
 {
-    if reference.len() == 0 {
+    if reference.is_empty() {
         QuadContents::Id("rdf:nil".to_owned())
     } else {
         let bnodes: Vec<_> = reference
@@ -90,31 +94,25 @@ where
             _ => unreachable!(),
         };
 
-        loop {
-            match bnodes.next() {
-                Some((subject, item)) => {
-                    let object = translate_reference(item, triples, generator);
+        while let Some((subject, item)) = bnodes.next() {
+            let object = translate_reference(item, triples, generator);
 
-                    triples.push(StringQuad {
-                        subject_id: subject.to_owned(),
-                        predicate_id: RDF_FIRST.to_owned(),
-                        contents: object,
-                    });
+            triples.push(StringQuad {
+                subject_id: subject.to_owned(),
+                predicate_id: RDF_FIRST.to_owned(),
+                contents: object,
+            });
 
-                    let next_id = match bnodes.peek() {
-                        Some(&(ref val, _)) => val.to_owned(),
-                        None => RDF_NIL.to_owned(),
-                    };
+            let next_id = match bnodes.peek() {
+                Some(&(ref val, _)) => val.to_owned(),
+                None => RDF_NIL.to_owned(),
+            };
 
-                    triples.push(StringQuad {
-                        subject_id: subject,
-                        predicate_id: RDF_REST.to_owned(),
-                        contents: QuadContents::Id(next_id),
-                    });
-                }
-
-                _ => break,
-            }
+            triples.push(StringQuad {
+                subject_id: subject,
+                predicate_id: RDF_REST.to_owned(),
+                contents: QuadContents::Id(next_id),
+            });
         }
 
         QuadContents::Id(first_node)
@@ -133,6 +131,7 @@ where
         Pointer::List(list) => serialize_list(list, triples, generator),
         Pointer::Id(id) => QuadContents::Id(id),
         Pointer::Value(val) => {
+            // Cannot collapse these two ifs because putting val.value in the tuple moves it there.
             if val.language.is_some() && val.value.is_string() {
                 if let (Some(language), JValue::String(strval)) = (val.language, val.value) {
                     return QuadContents::Object(
@@ -153,10 +152,10 @@ where
 /// Translates an expanded JSON-LD object into RDF quads.
 ///
 /// This method needs a blank node generator, and returns a
-/// map keyed on graph. By default, all items go into
-/// `@default`, but if `@graph` is used this may differ.
+/// map keyed on graph. When no `@graph` is used, objects will
+/// be stored under the `@default` graph.
 pub fn jsonld_to_rdf<T>(
-    element: JValue,
+    element: &JValue,
     generator: &mut T,
 ) -> Result<HashMap<String, Vec<StringQuad>>, NodeMapError>
 where
@@ -192,7 +191,7 @@ where
                             unreachable!();
                         }
                     }
-                } else if property.starts_with("@") {
+                } else if property.starts_with('@') {
                     continue;
                 } else {
                     for item in values {
@@ -200,7 +199,7 @@ where
                         triples.push(StringQuad {
                             subject_id: node.id.to_owned(),
                             predicate_id: property.to_owned(),
-                            contents: contents,
+                            contents,
                         })
                     }
                 }
@@ -213,11 +212,10 @@ where
     Ok(dataset)
 }
 
-fn literal_to_json(contents: QuadContents, use_native_types: bool) -> JValue {
+fn literal_to_json(contents: &QuadContents, use_native_types: bool) -> JValue {
     let mut obj = Map::new();
-    use serde_json::from_str;
 
-    match contents {
+    match contents.clone() {
         QuadContents::Id(id) => {
             obj.insert("@id".to_owned(), JValue::String(id));
         }
@@ -239,7 +237,8 @@ fn literal_to_json(contents: QuadContents, use_native_types: bool) -> JValue {
                 && (typeval == "http://www.w3.org/2001/XMLSchema#integer"
                     || typeval == "http://www.w3.org/2001/XMLSchema#double")
             {
-                if let Ok(JValue::Number(numval)) = from_str(&value) {
+                // Parsing numbers should work like in JSON, so just call into serde_json.
+                if let Ok(JValue::Number(numval)) = serde_json::from_str(&value) {
                     (None, JValue::Number(numval))
                 } else {
                     (Some(typeval), JValue::String(value))
@@ -274,22 +273,19 @@ fn literal_to_json(contents: QuadContents, use_native_types: bool) -> JValue {
 ///
 /// This method cannot fail. All RDF is properly translatable into
 /// JSON-LD.
-pub fn rdf_to_jsonld(
-    graphs: HashMap<String, Vec<StringQuad>>,
+#[allow(clippy::cognitive_complexity)]
+pub fn rdf_to_jsonld<S: BuildHasher>(
+    graphs: &HashMap<String, Vec<StringQuad>, S>,
     use_native_types: bool,
     use_rdf_type: bool,
 ) -> JValue {
     let mut graph_map = Map::new();
-    let mut usages: HashMap<String, HashMap<String, Vec<(String, String, String)>>> =
-        HashMap::new();
+    let mut usages = HashMap::new();
 
-    for (graph, triples) in graphs {
-        if !graph_map.contains_key(&graph) {}
-
+    for (graph_name, triples) in graphs {
         let mut node_map = Map::new();
 
         for triple in triples {
-            // 3.6.1
             if !node_map.contains_key(&triple.subject_id) {
                 let mut input = Map::new();
                 input.insert(
@@ -308,7 +304,7 @@ pub fn rdf_to_jsonld(
                     node_map.insert(idstr.to_owned(), JValue::Object(input));
                 }
 
-                if &triple.predicate_id == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+                if triple.predicate_id == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
                     && !use_rdf_type
                 {
                     let node = node_map
@@ -322,22 +318,22 @@ pub fn rdf_to_jsonld(
                             JValue::Array(vec![JValue::String(idstr.to_owned())]),
                         );
                     } else {
-                        // todo: deduplicate, 3.5.4
-                        node.get_mut("@type")
-                            .unwrap()
-                            .as_array_mut()
-                            .unwrap()
-                            .push(JValue::String(idstr.to_owned()));
+                        let arr = node.get_mut("@type").unwrap().as_array_mut().unwrap();
+
+                        let val = JValue::String(idstr.clone());
+                        if !arr.contains(&val) {
+                            arr.push(val);
+                        }
                     }
 
                     continue;
                 }
 
-                if !usages.contains_key(&graph) {
-                    usages.insert(graph.to_owned(), HashMap::new());
+                if !usages.contains_key(graph_name) {
+                    usages.insert(graph_name.to_owned(), HashMap::new());
                 }
 
-                let usage = usages.get_mut(&graph).unwrap();
+                let usage = usages.get_mut(graph_name).unwrap();
 
                 if !usage.contains_key(idstr) {
                     usage.insert(idstr.to_owned(), Vec::new());
@@ -357,20 +353,25 @@ pub fn rdf_to_jsonld(
                 .unwrap()
                 .as_object_mut()
                 .unwrap();
-            let value = literal_to_json(triple.contents, use_native_types);
+
+            let value = literal_to_json(&triple.contents, use_native_types);
+
             if !node.contains_key(&triple.predicate_id) {
                 node.insert(triple.predicate_id.to_owned(), JValue::Array(Vec::new()));
             }
 
-            // deduplicate???
-            node.get_mut(&triple.predicate_id)
+            let arr = node
+                .get_mut(&triple.predicate_id)
                 .unwrap()
                 .as_array_mut()
-                .unwrap()
-                .push(value);
+                .unwrap();
+
+            if !arr.contains(&value) {
+                arr.push(value);
+            }
         }
 
-        graph_map.insert(graph, JValue::Object(node_map));
+        graph_map.insert(graph_name.to_owned(), JValue::Object(node_map));
     }
 
     for (name, mut graph_object) in usages {
@@ -378,9 +379,9 @@ pub fn rdf_to_jsonld(
             continue;
         }
 
-        let mut node_map = graph_map.get_mut(&name).unwrap().as_object_mut().unwrap();
+        let node_map = graph_map.get_mut(&name).unwrap().as_object_mut().unwrap();
 
-        let mut nil = graph_object.remove(RDF_NIL).unwrap();
+        let nil = graph_object.remove(RDF_NIL).unwrap();
         for (mut node_id, mut property, mut head) in nil {
             let mut list = Vec::new();
             let mut list_nodes = Vec::new();
@@ -392,16 +393,26 @@ pub fn rdf_to_jsonld(
                 {
                     break;
                 }
-                {
-                    let node = node_map.get(&node_id).unwrap().as_object().unwrap();
-                    if !node.contains_key(RDF_REST) || !node.contains_key(RDF_FIRST) {
-                        break;
-                    }
 
-                    // todo: @type
-                    if node.len() > 3 {
+                // The nodes that a list consist of can have only three predicates:
+                //  rdf:first, rdf:rest, and an optional @type which is equal to rdf:List.
+
+                let node = node_map.get(&node_id).unwrap().as_object().unwrap();
+                if !node.contains_key(RDF_REST) || !node.contains_key(RDF_FIRST) {
+                    break;
+                }
+
+                // XXX: yes this breaks if set to `use rdf:type`. Blame the spec.
+                if node.len() == 3 && node.contains_key("@type") {
+                    if let JValue::Array(ref arr) = node["@type"] {
+                        if arr.len() != 1 || arr[0].as_str() != Some(RDF_LIST) {
+                            break;
+                        }
+                    } else {
                         break;
                     }
+                } else if node.len() > 2 {
+                    break;
                 }
 
                 if let JValue::Object(mut node) = node_map.remove(&node_id).unwrap() {
@@ -427,37 +438,43 @@ pub fn rdf_to_jsonld(
                 }
             }
 
-            if &property == RDF_FIRST {
-                if &node_id == RDF_NIL {
+            if property == RDF_FIRST {
+                if node_id == RDF_NIL {
                     continue;
                 }
 
-                panic!("todo")
+                // This list is contained in another list's rdf:first field, and as
+                // such has to be translated into a list object which will be
+                // pointed at in the outer list.
+                let head_obj = node_map.get_mut(&head).unwrap();
+                let rest_obj = head_obj.as_array_mut().unwrap().remove(0);
+                *head_obj = rest_obj;
+
+                list.pop();
+                list_nodes.pop();
             }
 
-            {
-                if let JValue::Object(mut head_object) = node_map.remove(&node_id).unwrap() {
-                    for value in head_object
-                        .get_mut(&property)
-                        .unwrap()
-                        .as_array_mut()
-                        .unwrap()
-                    {
-                        let value = value.as_object_mut().unwrap();
-                        if !value.contains_key("@id") || value["@id"].as_str().unwrap() != &head {
-                            continue;
-                        }
-
-                        value.remove("@id");
-                        list.reverse();
-                        value.insert("@list".to_owned(), JValue::Array(list));
-                        break;
+            if let JValue::Object(mut head_object) = node_map.remove(&node_id).unwrap() {
+                for value in head_object
+                    .get_mut(&property)
+                    .unwrap()
+                    .as_array_mut()
+                    .unwrap()
+                {
+                    let value = value.as_object_mut().unwrap();
+                    if value.get("@id").and_then(JValue::as_str) != Some(&head) {
+                        continue;
                     }
 
-                    node_map.insert(node_id.to_owned(), JValue::Object(head_object));
-                } else {
-                    unreachable!();
+                    value.remove("@id");
+                    list.reverse();
+                    value.insert("@list".to_owned(), JValue::Array(list));
+                    break;
                 }
+
+                node_map.insert(node_id.to_owned(), JValue::Object(head_object));
+            } else {
+                unreachable!();
             }
 
             for node in list_nodes {
@@ -473,10 +490,8 @@ pub fn rdf_to_jsonld(
                 let mut arr = Vec::new();
                 if let Some(JValue::Object(val)) = graph_map.remove(&subject) {
                     for (_, n) in val {
-                        if {
-                            let obj_n = n.as_object().unwrap();
-                            obj_n.len() > 1 || !obj_n.contains_key("@id")
-                        } {
+                        let obj = n.as_object().unwrap();
+                        if obj.len() > 1 || !obj.contains_key("@id") {
                             arr.push(n);
                         }
                     }
@@ -487,10 +502,8 @@ pub fn rdf_to_jsonld(
                     .insert("@graph".to_owned(), JValue::Array(arr));
             }
 
-            if {
-                let nobj = node.as_object().unwrap();
-                nobj.len() > 1 || !nobj.contains_key("@id")
-            } {
+            let obj = node.as_object().unwrap();
+            if obj.len() > 1 || !obj.contains_key("@id") {
                 result.insert(subject, node);
             }
         }

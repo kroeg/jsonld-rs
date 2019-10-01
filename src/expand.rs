@@ -1,12 +1,14 @@
-use super::context::{Context, Term};
-use super::creation::ContextCreationError;
-use super::RemoteContextLoader;
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 
-use futures::prelude::{await, *};
+use crate::context::Context;
+use crate::creation::ContextCreationError;
+use crate::RemoteContextLoader;
 
 #[derive(Debug)]
 /// Errors that may occur when expanding a JSON-LD structure.
@@ -32,7 +34,7 @@ pub enum ExpansionError<T: RemoteContextLoader> {
     /// Object inside reverse property is value/list object.
     InvalidReversePropertyValue,
 
-    /// `@is` value is not a string.
+    /// `@id` value is not a string.
     InvalidIdValue,
 
     /// Value object contains invalid keys, or both `@type` and `@language`.
@@ -66,34 +68,32 @@ impl<T: RemoteContextLoader> fmt::Display for ExpansionError<T> {
             ExpansionError::ContextExpansionError(ref err) => {
                 write!(f, "context expansion error: {}", err)
             }
-            _ => f.write_str(self.description()),
+
+            ExpansionError::ListOfLists => write!(f, "list of lists error"),
+            ExpansionError::InvalidReversePropertyMap => write!(f, "invalid reverse property map"),
+            ExpansionError::CollidingKeywords => write!(f, "colliding keywords"),
+            ExpansionError::InvalidIdValue => write!(f, "invalid @id value"),
+            ExpansionError::InvalidLanguageMapValue => write!(f, "invalid language map value"),
+            ExpansionError::InvalidLanguageTaggedString => {
+                write!(f, "invalid language-tagged string")
+            }
+            ExpansionError::InvalidIndexValue => write!(f, "invalid @index value"),
+            ExpansionError::InvalidReversePropertyValue => {
+                write!(f, "invalid reverse property value")
+            }
+            ExpansionError::InvalidValueObject => write!(f, "invalid value object"),
+            ExpansionError::InvalidTypedValue => write!(f, "invalid typed value"),
+            ExpansionError::InvalidSetObject => write!(f, "invalid set object"),
+            ExpansionError::InvalidListObject => write!(f, "invalid list object"),
+            ExpansionError::InvalidTypeValue => write!(f, "invalid @type value"),
+            ExpansionError::InvalidValueObjectValue => write!(f, "invalid value object value"),
+            ExpansionError::InvalidReverseValue => write!(f, "invalid @reverse value"),
         }
     }
 }
 
 impl<T: RemoteContextLoader> Error for ExpansionError<T> {
-    fn description(&self) -> &str {
-        match *self {
-            ExpansionError::ListOfLists => "list of lists error",
-            ExpansionError::InvalidReversePropertyMap => "invalid reverse property map",
-            ExpansionError::CollidingKeywords => "colliding keywords",
-            ExpansionError::InvalidIdValue => "invalid @id value",
-            ExpansionError::InvalidLanguageMapValue => "invalid language map value",
-            ExpansionError::InvalidLanguageTaggedString => "invalid language-tagged string",
-            ExpansionError::InvalidIndexValue => "invalid @index value",
-            ExpansionError::InvalidReversePropertyValue => "invalid reverse property value",
-            ExpansionError::InvalidValueObject => "invalid value object",
-            ExpansionError::InvalidTypedValue => "invalid typed value",
-            ExpansionError::InvalidSetObject => "invalid set object",
-            ExpansionError::InvalidListObject => "invalid list object",
-            ExpansionError::InvalidTypeValue => "invalid @type value",
-            ExpansionError::InvalidValueObjectValue => "invalid value object value",
-            ExpansionError::InvalidReverseValue => "invalid @reverse value",
-            ExpansionError::ContextExpansionError(_) => "Failed to expand context",
-        }
-    }
-
-    fn cause(&self) -> Option<&Error> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
             ExpansionError::ContextExpansionError(ref err) => Some(err),
             _ => None,
@@ -101,167 +101,148 @@ impl<T: RemoteContextLoader> Error for ExpansionError<T> {
     }
 }
 
-fn _array_or_list_object(elem: &Value) -> bool {
-    elem.is_array() || (elem.is_object() && elem.as_object().unwrap().contains_key("@list"))
-}
+/// Helper function that expands a "primitive" JSON-LD value, aka anything that isn't
+///  an array or an object.
+fn _expand_value(ctx: &Context, active_property: &str, elem: &Value) -> Value {
+    let mut resmap = Map::new();
+    let mut set_language_mapping = false;
 
-impl Context {
-    fn _expand_value(&self, active_property: &str, elem: Value) -> Value {
-        let mut resmap = Map::new();
-        let mut set_language_mapping = false;
-
-        if let Some(term) = self.terms.get(active_property) {
-            if let Some(ref map) = term.type_mapping {
-                if map == "@id" || map == "@vocab" {
-                    if let Value::String(value) = elem {
-                        // 1, 2
-                        resmap.insert(
-                            "@id".to_owned(),
-                            Value::String(self.expand_iri(&value, true, map == "@vocab")),
-                        );
-                        return Value::Object(resmap);
-                    }
-                } else {
-                    resmap.insert("@type".to_owned(), Value::String(map.to_owned()));
+    if let Some(term) = ctx.terms.get(active_property) {
+        if let Some(ref map) = term.type_mapping {
+            if map == "@id" || map == "@vocab" {
+                if let Value::String(value) = elem {
+                    // 1, 2
+                    resmap.insert(
+                        "@id".to_owned(),
+                        Value::String(ctx.expand_iri(&value, true, map == "@vocab")),
+                    );
+                    return Value::Object(resmap);
                 }
-            } else if elem.is_string() {
-                if let Some(ref lang) = term.language_mapping {
-                    if lang != "@null" {
-                        resmap.insert("@language".to_owned(), Value::String(lang.to_owned()));
-                    }
-                } else {
-                    set_language_mapping = true;
-                }
+            } else {
+                resmap.insert("@type".to_owned(), Value::String(map.to_owned()));
             }
         } else if elem.is_string() {
-            set_language_mapping = true;
-        }
-
-        if set_language_mapping {
-            if let Some(ref lang) = self.language {
-                resmap.insert("@language".to_owned(), Value::String(lang.to_owned()));
+            if let Some(ref lang) = term.language_mapping {
+                if lang != "@null" {
+                    resmap.insert("@language".to_owned(), Value::String(lang.to_owned()));
+                }
+            } else {
+                set_language_mapping = true;
             }
         }
-
-        resmap.insert("@value".to_owned(), elem);
-
-        Value::Object(resmap)
+    } else if elem.is_string() {
+        set_language_mapping = true;
     }
 
-    #[async(boxed_send)]
-    fn _expand<T: RemoteContextLoader>(
-        active_context: Context,
-        active_property: Option<String>,
-        elem: Value,
-    ) -> Result<Value, ExpansionError<T>> {
+    if set_language_mapping {
+        if let Some(ref lang) = ctx.language {
+            resmap.insert("@language".to_owned(), Value::String(lang.to_owned()));
+        }
+    }
+
+    resmap.insert("@value".to_owned(), elem.clone());
+
+    Value::Object(resmap)
+}
+
+#[allow(clippy::cognitive_complexity)]
+fn _expand<'d, 'a: 'd, 'b: 'd, 'c: 'd, T: RemoteContextLoader>(
+    active_context: &'a Context,
+    active_property: Option<&'b str>,
+    elem: &'c Value,
+) -> Pin<Box<dyn Future<Output = Result<Value, ExpansionError<T>>> + 'd + Send>> {
+    Box::pin(async move {
         match elem {
-            // 1
             Value::Null => Ok(Value::Null),
             Value::Array(arr) => {
-                // 3
                 let mut res = Vec::new();
                 for item in arr {
-                    // 3.2.1
-                    let expanded_item = await!(Context::_expand::<T>(
-                        active_context.clone(),
-                        active_property.clone(),
-                        item
-                    ))?;
+                    let expanded_item = _expand::<T>(active_context, active_property, item).await?;
 
-                    // 3.2.2
-                    if _array_or_list_object(&expanded_item) {
-                        if let Some(string) = active_property.clone() {
+                    if expanded_item.is_array()
+                        || expanded_item.as_object().map(|f| f.contains_key("@list")) == Some(true)
+                    {
+                        if let Some(string) = active_property {
                             if string == "@list" {
                                 return Err(ExpansionError::ListOfLists);
                             }
 
-                            if let Some(data) = active_context
+                            if active_context
                                 .terms
-                                .get(&string)
-                                .and_then(|a| a.container_mapping.as_ref())
+                                .get(string)
+                                .and_then(|a| a.container_mapping.as_ref().map(|f| f as &str))
+                                == Some("@list")
                             {
-                                if data == "@list" {
-                                    return Err(ExpansionError::ListOfLists);
-                                }
+                                return Err(ExpansionError::ListOfLists);
                             }
                         }
                     }
 
-                    // 3.2.3
                     match expanded_item {
                         Value::Array(arr) => {
                             for item in arr {
                                 res.push(item)
                             }
                         }
-                        Value::Null => {}
+                        Value::Null => (),
                         _ => res.push(expanded_item),
                     }
                 }
 
-                // 3.3
                 Ok(Value::Array(res))
             }
 
-            // 4
-            Value::Object(mut map) => {
-                // 5
-                let active_context = if map.contains_key("@context") {
-                    // ugly hack to make the active_context survive
-                    let (_, ctx) = await!(active_context
-                        .process_context::<T>(map.remove("@context").unwrap(), HashMap::new()))
-                    .map_err(|e| ExpansionError::ContextExpansionError(e))?;
+            Value::Object(ref map) => {
+                let active_context = if let Some(context) = map.get("@context") {
+                    let mut cloned = active_context.clone();
+                    cloned
+                        .process_context::<T>(context, &mut HashMap::new())
+                        .await
+                        .map_err(ExpansionError::ContextExpansionError)?;
 
-                    ctx
+                    Cow::Owned(cloned)
                 } else {
-                    active_context
+                    Cow::Borrowed(active_context)
                 };
 
-                // 6
                 let mut result: Map<String, Value> = Map::new();
 
-                // 7
-                for (key, mut value) in map {
-                    // 7.1
+                for (key, value) in map {
                     if key == "@context" {
                         continue;
                     }
 
-                    // 7.2
-                    let prop = active_context.expand_iri(&key, false, true);
+                    let prop = active_context.expand_iri(key, false, true);
 
-                    // 7.3
-                    if !prop.contains(":") && !prop.starts_with("@") {
+                    if !prop.contains(':') && !prop.starts_with('@') {
+                        // There's no relevant IRI mapping for this key and it isn't a keyword, so skip it.
                         continue;
                     }
 
-                    // 7.4
-                    if prop.starts_with("@") {
-                        let expanded_value: Value;
-
-                        // 7.4.1
-                        if active_property.as_ref().map(String::as_str) == Some("@reverse") {
+                    if prop.starts_with('@') {
+                        if active_property == Some("@reverse") {
                             return Err(ExpansionError::InvalidReversePropertyMap);
                         }
 
-                        // 7.4.2
+                        // Two IRIs can map to the same keyword, e.g. if you use `@id` and your context also defines `"id": "@id"`.
                         if result.contains_key(&prop) {
                             return Err(ExpansionError::CollidingKeywords);
                         }
 
+                        let expanded_value: Value;
+
                         match prop.as_str() {
-                            // 7.4.3
+                            // Expand IRI values used for the ID (IDs use the same namespace
+                            //  as keys, this can cause interesting issues.)
                             "@id" => {
                                 if let Value::String(idval) = value {
-                                    expanded_value = Value::String(
-                                        active_context.expand_iri(&idval, true, false),
-                                    )
+                                    expanded_value =
+                                        Value::String(active_context.expand_iri(idval, true, false))
                                 } else {
                                     return Err(ExpansionError::InvalidIdValue);
                                 }
                             }
 
-                            // 7.4.4
                             "@type" => {
                                 expanded_value = match value {
                                     Value::String(typeval) => Value::String(
@@ -271,13 +252,13 @@ impl Context {
                                         let mut result = Vec::new();
 
                                         for a in typevals {
-                                            if let Value::String(ref aval) = a {
-                                                result.push(Value::String(
-                                                    active_context.expand_iri(aval, true, true),
-                                                ));
-                                            } else {
-                                                return Err(ExpansionError::InvalidTypeValue);
-                                            }
+                                            let typeval = a
+                                                .as_str()
+                                                .ok_or(ExpansionError::InvalidTypeValue)?;
+
+                                            result.push(Value::String(
+                                                active_context.expand_iri(typeval, true, true),
+                                            ));
                                         }
 
                                         Value::Array(result)
@@ -286,29 +267,21 @@ impl Context {
                                 }
                             }
 
-                            // 7.4.5
                             "@graph" => {
-                                expanded_value = await!(Context::_expand::<T>(
-                                    active_context.clone(),
-                                    Some(prop.to_owned()),
-                                    value
-                                ))?
+                                expanded_value =
+                                    _expand::<T>(active_context.as_ref(), Some(&prop), value)
+                                        .await?
                             }
 
-                            // 7.4.6
                             "@value" => {
                                 expanded_value = match value {
-                                    Value::Object(_) => {
+                                    Value::Object(_) | Value::Array(_) => {
                                         return Err(ExpansionError::InvalidValueObjectValue)
                                     }
-                                    Value::Array(_) => {
-                                        return Err(ExpansionError::InvalidValueObjectValue)
-                                    }
-                                    _ => value,
+                                    _ => value.clone(),
                                 }
                             }
 
-                            // 7.4.7
                             "@language" => {
                                 expanded_value = match value {
                                     Value::String(string) => Value::String(string.to_lowercase()),
@@ -316,32 +289,22 @@ impl Context {
                                 }
                             }
 
-                            // 7.4.8
                             "@index" => {
                                 expanded_value = match value {
-                                    Value::String(_) => value,
+                                    Value::String(_) => value.clone(),
                                     _ => return Err(ExpansionError::InvalidIndexValue),
                                 }
                             }
 
-                            // 7.4.9
                             "@list" => {
-                                // 7.4.9.1
-                                if active_property == None
-                                    || active_property.as_ref().map(String::as_str)
-                                        == Some("@graph")
-                                {
+                                if active_property == None || active_property == Some("@graph") {
                                     continue;
                                 }
 
-                                // 7.4.9.2
-                                let tex = await!(Context::_expand::<T>(
-                                    active_context.clone(),
-                                    active_property.to_owned(),
-                                    value
-                                ))?;
+                                let tex =
+                                    _expand::<T>(active_context.as_ref(), active_property, value)
+                                        .await?;
 
-                                // 7.4.9.3
                                 if let Value::Object(ref obj) = tex {
                                     if obj.contains_key("@list") {
                                         return Err(ExpansionError::ListOfLists);
@@ -349,112 +312,97 @@ impl Context {
                                 }
 
                                 if !tex.is_array() {
-                                    // XXX test compact-0004
-                                    expanded_value = Value::Array(vec![tex].into());
+                                    expanded_value = Value::Array(vec![tex]);
                                 } else {
                                     expanded_value = tex;
                                 }
                             }
 
-                            // 7.4.10
                             "@set" => {
-                                expanded_value = await!(Context::_expand::<T>(
-                                    active_context.clone(),
-                                    active_property.to_owned(),
-                                    value
-                                ))?;
+                                expanded_value =
+                                    _expand::<T>(active_context.as_ref(), active_property, value)
+                                        .await?;
                             }
 
-                            // 7.4.11
                             "@reverse" => {
-                                if let Value::Object(obj) = value {
-                                    // 7.4.11.1
-                                    expanded_value = await!(Context::_expand::<T>(
-                                        active_context.clone(),
-                                        Some(prop),
-                                        Value::Object(obj.clone()),
-                                    ))?;
+                                if value.is_object() {
+                                    expanded_value =
+                                        _expand::<T>(active_context.as_ref(), Some(&prop), value)
+                                            .await?;
 
-                                    if let Value::Object(mut expv) = expanded_value {
-                                        // 7.4.11.2
-                                        if let Some(reverse) = expv.remove("@reverse") {
-                                            if let Value::Object(ob) = reverse {
-                                                for (property, mut item) in ob {
-                                                    // 7.4.11.2.1
-                                                    if !result.contains_key(&property) {
-                                                        result.insert(
-                                                            property.to_string(),
-                                                            Value::Array(Vec::new()),
-                                                        );
-                                                    }
+                                    let mut expanded_value = match expanded_value {
+                                        Value::Object(expv) => expv,
+                                        _ => unreachable!(),
+                                    };
 
-                                                    // 7.4.11.2.2
-                                                    if let Value::Array(ref mut val) =
-                                                        result[&property]
-                                                    {
-                                                        if item.is_array() {
-                                                            // XXX no idea if this is right
-                                                            val.append(item.as_array_mut().unwrap())
-                                                        } else {
-                                                            val.push(item)
-                                                        }
-                                                    }
+                                    if let Some(reverse) = expanded_value.remove("@reverse") {
+                                        if let Value::Object(ob) = reverse {
+                                            for (property, mut item) in ob {
+                                                if !result.contains_key(&property) {
+                                                    result.insert(
+                                                        property.to_string(),
+                                                        Value::Array(Vec::new()),
+                                                    );
                                                 }
-                                            } else {
-                                                unreachable!()
-                                            }
-                                        }
 
-                                        // 7.4.11.3
-                                        if !expv.is_empty() {
-                                            // 7.4.11.3.1
-                                            if !result.contains_key("@reverse") {
-                                                result.insert(
-                                                    "@reverse".to_owned(),
-                                                    Value::Object(Map::new()),
-                                                );
-                                            }
-
-                                            // 7.4.11.3.2
-                                            let mut reverse_map =
-                                                result["@reverse"].as_object_mut().unwrap();
-
-                                            // 7.4.11.3.3
-                                            for (property, items) in expv {
-                                                // 7.4.11.3.3.1
-                                                for item in items.as_array().unwrap() {
-                                                    if let Value::Object(ref vobj) = *item {
-                                                        // 7.4.11.3.3.1.1
-                                                        if vobj.contains_key("@value")
-                                                            || vobj.contains_key("@list")
-                                                        {
-                                                            return Err(ExpansionError::InvalidReversePropertyValue);
-                                                        }
+                                                if let Value::Array(ref mut val) = result[&property]
+                                                {
+                                                    if item.is_array() {
+                                                        val.append(item.as_array_mut().unwrap())
+                                                    } else {
+                                                        val.push(item)
                                                     }
-
-                                                    // 7.4.11.3.3.1.2
-                                                    if !reverse_map.contains_key(&property) {
-                                                        reverse_map.insert(
-                                                            property.to_owned(),
-                                                            Value::Array(Vec::new()),
-                                                        );
-                                                    }
-
-                                                    let map = reverse_map[&property]
-                                                        .as_array_mut()
-                                                        .unwrap();
-
-                                                    // 7.4.11.3.3.1.3
-                                                    map.push(item.clone())
+                                                } else {
+                                                    unreachable!();
                                                 }
                                             }
+                                        } else {
+                                            unreachable!()
                                         }
-
-                                        // 7.4.11.4
-                                        continue;
-                                    } else {
-                                        unreachable!()
                                     }
+
+                                    if !expanded_value.is_empty() {
+                                        if !result.contains_key("@reverse") {
+                                            result.insert(
+                                                "@reverse".to_owned(),
+                                                Value::Object(Map::new()),
+                                            );
+                                        }
+
+                                        let reverse_map =
+                                            result["@reverse"].as_object_mut().unwrap();
+
+                                        for (property, items) in expanded_value {
+                                            let items = match items {
+                                                Value::Array(arr) => arr,
+                                                _ => unreachable!(),
+                                            };
+
+                                            for item in items {
+                                                if let Value::Object(ref vobj) = item {
+                                                    if vobj.contains_key("@value")
+                                                        || vobj.contains_key("@list")
+                                                    {
+                                                        return Err(ExpansionError::InvalidReversePropertyValue);
+                                                    }
+                                                }
+
+                                                if !reverse_map.contains_key(&property) {
+                                                    reverse_map.insert(
+                                                        property.to_owned(),
+                                                        Value::Array(Vec::new()),
+                                                    );
+                                                }
+
+                                                let map =
+                                                    reverse_map[&property].as_array_mut().unwrap();
+
+                                                map.push(item)
+                                            }
+                                        }
+                                    }
+
+                                    continue;
                                 } else {
                                     return Err(ExpansionError::InvalidReverseValue);
                                 }
@@ -463,205 +411,170 @@ impl Context {
                             _ => continue,
                         }
 
-                        // 7.4.12, provably non-null! :D
                         result.insert(prop, expanded_value);
                     } else {
-                        let mut expanded_value: Option<Value> = None;
-                        let item = active_context.terms.get(&key).map(Term::to_owned);
-                        if let Some(item) = item {
-                            if let Some(map) = item.container_mapping.clone() {
-                                if map == "@language" && value.is_object() {
-                                    // 7.5
-                                    let obj = value.as_object().unwrap();
-                                    let mut new_arr = Vec::new();
+                        let container_mapping = active_context
+                            .terms
+                            .get(key)
+                            .and_then(|f| f.container_mapping.as_ref())
+                            .map(String::as_str);
+                        let mut expanded_value = match (container_mapping, value) {
+                            (Some("@language"), Value::Object(obj)) => {
+                                let mut new_arr = Vec::new();
 
-                                    for (language, language_value) in obj {
-                                        let language = language.to_lowercase();
+                                for (language, language_value) in obj {
+                                    let language = language.to_lowercase();
 
-                                        let language_values = match *language_value {
-                                            Value::String(ref string) => {
-                                                vec![Value::String(string.clone())]
-                                            }
-                                            Value::Array(ref arr) => arr.clone(),
-                                            Value::Null => continue,
-                                            _ => {
-                                                return Err(ExpansionError::InvalidLanguageMapValue)
-                                            }
-                                        };
-
-                                        for val in language_values {
-                                            if val.is_null() {
-                                                continue;
-                                            }
-                                            if !val.is_string() {
-                                                return Err(ExpansionError::InvalidLanguageMapValue);
-                                            }
-
-                                            let mut map = Map::new();
-                                            map.insert("@value".to_string(), val);
-                                            map.insert(
-                                                "@language".to_string(),
-                                                Value::String(language.to_string()),
-                                            );
-
-                                            new_arr.push(Value::Object(map))
+                                    let language_values = match *language_value {
+                                        Value::String(ref string) => {
+                                            vec![Value::String(string.clone())]
                                         }
+                                        Value::Array(ref arr) => arr.clone(),
+                                        Value::Null => continue,
+                                        _ => return Err(ExpansionError::InvalidLanguageMapValue),
+                                    };
+
+                                    for val in language_values {
+                                        if val.is_null() {
+                                            continue;
+                                        }
+
+                                        if !val.is_string() {
+                                            return Err(ExpansionError::InvalidLanguageMapValue);
+                                        }
+
+                                        let mut map = Map::new();
+                                        map.insert("@value".to_string(), val);
+                                        map.insert(
+                                            "@language".to_string(),
+                                            Value::String(language.to_string()),
+                                        );
+
+                                        new_arr.push(Value::Object(map))
                                     }
+                                }
 
-                                    expanded_value = Some(Value::Array(new_arr));
-                                } else if map == "@index" && value.is_object() {
-                                    // 7.6
-                                    if let Value::Object(obj) = value {
-                                        let mut ar = Vec::new();
-                                        for (index, mut index_value) in obj {
-                                            if !index_value.is_array() {
-                                                index_value =
-                                                    Value::Array(vec![index_value].into());
+                                Value::Array(new_arr)
+                            }
+
+                            (Some("@index"), Value::Object(obj)) => {
+                                let mut ar = Vec::new();
+
+                                for (index, index_value) in obj {
+                                    let index_value = match index_value {
+                                        Value::Array(_) => Cow::Borrowed(index_value),
+                                        _ => Cow::Owned(Value::Array(vec![index_value.clone()])),
+                                    };
+
+                                    let index_value = _expand::<T>(
+                                        active_context.as_ref(),
+                                        Some(&key),
+                                        index_value.as_ref(),
+                                    )
+                                    .await?;
+
+                                    if let Value::Array(var) = index_value {
+                                        for mut item in var {
+                                            if !item.as_object().unwrap().contains_key("@index") {
+                                                item.as_object_mut().unwrap().insert(
+                                                    "@index".to_owned(),
+                                                    Value::String(index.to_owned()),
+                                                );
                                             }
 
-                                            index_value = await!(Context::_expand::<T>(
-                                                active_context.clone(),
-                                                Some(key.to_owned()),
-                                                index_value,
-                                            ))?;
-                                            if let Value::Array(var) = index_value {
-                                                for mut item in var {
-                                                    if !item
-                                                        .as_object()
-                                                        .unwrap()
-                                                        .contains_key("@index")
-                                                    {
-                                                        item.as_object_mut().unwrap().insert(
-                                                            "@index".to_owned(),
-                                                            Value::String(index.to_owned()),
-                                                        );
-                                                    }
-
-                                                    ar.push(item);
-                                                }
-                                            } else {
-                                                unreachable!();
-                                            }
+                                            ar.push(item);
                                         }
-
-                                        expanded_value = Some(Value::Array(ar));
-                                        value = Value::Null;
                                     } else {
                                         unreachable!();
                                     }
                                 }
+
+                                Value::Array(ar)
                             }
-                        }
 
-                        // 7.7
-                        if expanded_value == None {
-                            expanded_value = Some(await!(Context::_expand::<T>(
-                                active_context.to_owned(),
-                                Some(key.to_owned()),
-                                value
-                            ))?);
-                        }
-                        let mut expanded_value = expanded_value.unwrap();
+                            _ => _expand::<T>(active_context.as_ref(), Some(&key), value).await?,
+                        };
 
-                        // 7.8
                         if expanded_value.is_null() {
                             continue;
                         }
 
-                        if let Some(item) = active_context.terms.get(&key) {
-                            if let Some(ref map) = item.container_mapping {
-                                // 7.9
-                                if map == "@list" {
-                                    match expanded_value {
-                                        Value::Object(obj) => {
-                                            if !obj.contains_key("@list") {
-                                                expanded_value =
-                                                    Value::Array(vec![Value::Object(obj)].into());
-                                                let mut map = Map::new();
-                                                map.insert("@list".to_string(), expanded_value);
-                                                expanded_value = Value::Object(map);
-                                            } else {
-                                                expanded_value = Value::Object(obj);
-                                            }
-                                        }
-
-                                        Value::Array(_) => {
+                        if let Some(item) = active_context.terms.get(key) {
+                            if item.container_mapping.as_ref().map(String::as_str) == Some("@list")
+                            {
+                                match expanded_value {
+                                    Value::Object(obj) => {
+                                        if !obj.contains_key("@list") {
+                                            expanded_value = Value::Array(vec![Value::Object(obj)]);
                                             let mut map = Map::new();
                                             map.insert("@list".to_string(), expanded_value);
                                             expanded_value = Value::Object(map);
+                                        } else {
+                                            expanded_value = Value::Object(obj);
                                         }
-
-                                        _ => unreachable!(),
                                     }
+
+                                    Value::Array(_) => {
+                                        let mut map = Map::new();
+                                        map.insert("@list".to_string(), expanded_value);
+                                        expanded_value = Value::Object(map);
+                                    }
+
+                                    _ => unreachable!(),
                                 }
                             }
 
-                            // 7.10
                             if item.reverse {
-                                // 7.10.1
                                 if !result.contains_key("@reverse") {
                                     result
                                         .insert("@reverse".to_string(), Value::Object(Map::new()));
                                 }
 
-                                // 7.10.2
-                                if let Value::Object(ref mut reverse_map) = result["@reverse"] {
-                                    // 7.10.3
-                                    let mut ar = if let Value::Array(array) = expanded_value {
-                                        array
-                                    } else {
-                                        vec![expanded_value].into()
-                                    };
+                                let reverse_map = result["@reverse"].as_object_mut().unwrap();
 
-                                    // 7.10.4
-                                    for item in &ar {
-                                        // 7.10.4.1
-                                        if let Value::Object(ref rm) = *item {
-                                            if rm.contains_key("@value") || rm.contains_key("@list")
-                                            {
-                                                return Err(
-                                                    ExpansionError::InvalidReversePropertyValue,
-                                                );
-                                            }
-                                        }
-                                    }
+                                let mut ar = if let Value::Array(array) = expanded_value {
+                                    array
+                                } else {
+                                    vec![expanded_value]
+                                };
 
-                                    if !reverse_map.contains_key(&prop) {
-                                        // 7.10.4.2
-                                        reverse_map.insert(prop, Value::Array(ar));
-                                    } else {
-                                        // 7.10.4.3
-                                        if let Value::Array(ref mut arr) = reverse_map[&prop] {
-                                            arr.append(&mut ar)
-                                        } else {
-                                            unreachable!();
+                                for item in &ar {
+                                    if let Value::Object(ref rm) = item {
+                                        if rm.contains_key("@value") || rm.contains_key("@list") {
+                                            return Err(
+                                                ExpansionError::InvalidReversePropertyValue,
+                                            );
                                         }
                                     }
                                 }
+
+                                if !reverse_map.contains_key(&prop) {
+                                    reverse_map.insert(prop, Value::Array(ar));
+                                } else if let Value::Array(ref mut arr) = reverse_map[&prop] {
+                                    arr.append(&mut ar);
+                                } else {
+                                    unreachable!();
+                                }
+
                                 continue;
                             }
                         }
 
                         if !expanded_value.is_array() {
-                            expanded_value = Value::Array(vec![expanded_value].into());
+                            expanded_value = Value::Array(vec![expanded_value]);
                         }
 
-                        // 7.11
                         if !result.contains_key(&prop) {
-                            // 7.11.1
                             result.insert(prop, expanded_value);
+                        } else if let Value::Array(ref mut arr) = result[&prop] {
+                            arr.append(expanded_value.as_array_mut().unwrap());
                         } else {
-                            // 7.11.2
-                            if let Value::Array(ref mut arr) = result[&prop] {
-                                arr.append(expanded_value.as_array_mut().unwrap());
-                            }
+                            unreachable!();
                         }
                     }
                 }
 
-                if result.contains_key("@value") {
-                    let val = &result["@value"];
-
+                if let Some(val) = result.get("@value") {
                     for key in result.keys() {
                         if key == "@value"
                             || key == "@language"
@@ -678,9 +591,9 @@ impl Context {
                         return Err(ExpansionError::InvalidValueObject);
                     }
 
-                    match *val {
+                    match val {
                         Value::Null => return Ok(Value::Null),
-                        Value::String(_) => {}
+                        Value::String(_) => (),
                         _ => {
                             if result.contains_key("@language") {
                                 return Err(ExpansionError::InvalidTypedValue);
@@ -693,39 +606,32 @@ impl Context {
                             return Err(ExpansionError::InvalidTypedValue);
                         }
                     }
-                } else if result.contains_key("@type") {
-                    let typeval = result.remove("@type").unwrap();
-                    result.insert(
-                        "@type".to_owned(),
-                        if typeval.is_string() {
-                            Value::Array(vec![typeval].into())
-                        } else {
-                            typeval
-                        },
-                    );
-                } else if result.contains_key("@set") {
-                    if result.len() > 2 || (result.len() == 2 && !result.contains_key("@index")) {
+                } else if let Some(typeval) = result.get_mut("@type") {
+                    if typeval.is_string() {
+                        let val = std::mem::replace(typeval, Value::Null);
+                        *typeval = Value::Array(vec![val]);
+                    }
+                } else if let Some(set) = result.remove("@set") {
+                    // We can only have one other item in the result if `@set` is used, namely `@index`.
+                    if result.len() > 1 || (result.len() == 1 && !result.contains_key("@index")) {
                         return Err(ExpansionError::InvalidSetObject);
                     }
 
-                    return Ok(result.remove("@set").unwrap());
-                } else if result.contains_key("@list") {
-                    if result.len() > 2 || (result.len() == 2 && !result.contains_key("@index")) {
-                        return Err(ExpansionError::InvalidListObject);
-                    }
+                    return Ok(set);
+                } else if result.contains_key("@list")
+                    && (result.len() > 2 || (result.len() == 2 && !result.contains_key("@index")))
+                {
+                    return Err(ExpansionError::InvalidListObject);
                 }
 
                 if result.len() == 1 && result.contains_key("@language") {
                     Ok(Value::Null)
-                } else if active_property == None
-                    || active_property.as_ref().map(String::as_str) == Some("@graph")
-                {
-                    if result.len() == 0
+                } else if active_property == None || active_property == Some("@graph") {
+                    if result.is_empty()
                         || result.contains_key("@value")
                         || result.contains_key("@list")
+                        || (result.len() == 1 && result.contains_key("@id"))
                     {
-                        Ok(Value::Null)
-                    } else if result.len() == 1 && result.contains_key("@id") {
                         Ok(Value::Null)
                     } else {
                         Ok(Value::Object(result))
@@ -735,44 +641,35 @@ impl Context {
                 }
             }
 
-            // 2
-            _ => {
-                if let Some(activeprop) = active_property {
-                    if activeprop == "@graph" {
-                        // 2.1
-                        Ok(Value::Null)
-                    } else {
-                        // 2.2
-                        Ok(active_context._expand_value(&activeprop, elem))
-                    }
-                } else {
-                    // 2.1
-                    Ok(Value::Null)
-                }
-            }
+            _ => match active_property {
+                Some("@graph") | None => Ok(Value::Null),
+                Some(active_property) => Ok(_expand_value(active_context, active_property, elem)),
+            },
+        }
+    })
+}
+
+pub async fn expand<T: RemoteContextLoader>(
+    ctx: &Context,
+    elem: &Value,
+) -> Result<Value, ExpansionError<T>> {
+    let mut val = _expand::<T>(ctx, None, elem).await?;
+
+    if val
+        .as_object()
+        .map(|f| f.len() == 1 && f.contains_key("@graph"))
+        == Some(true)
+    {
+        if let Value::Object(mut objd) = val {
+            val = objd.remove("@graph").unwrap();
         }
     }
 
-    #[async]
-    pub fn expand<T: RemoteContextLoader>(self, elem: Value) -> Result<Value, ExpansionError<T>> {
-        let mut val = await!(Context::_expand::<T>(self, None, elem))?;
-
-        if val
-            .as_object()
-            .and_then(|f| Some(f.len() == 1 && f.contains_key("@graph")))
-            == Some(true)
-        {
-            if let Value::Object(mut objd) = val {
-                val = objd.remove("@graph").unwrap();
-            }
-        }
-
-        if val.is_null() {
-            Ok(Value::Array(Vec::new()))
-        } else if !val.is_array() {
-            Ok(Value::Array(vec![val].into()))
-        } else {
-            Ok(val)
-        }
+    if val.is_null() {
+        Ok(Value::Array(Vec::new()))
+    } else if !val.is_array() {
+        Ok(Value::Array(vec![val]))
+    } else {
+        Ok(val)
     }
 }
